@@ -1,9 +1,10 @@
 import sys
 import numpy as np
 from itertools import zip_longest, product, chain, repeat
+import viz_sequence
+import train_TFmodel
 
 one_hot_encoder = np.fromstring('acgt', np.uint8)
-
 
 # some sequence encoding methods
 def encode_to_string(seq):
@@ -64,26 +65,6 @@ def rc(seq):
     else:
         raise TypeError('Sequence is not an accepted type')
 
-#some batch forming methods
-def blank_batch(seq, batch_size=32):
-     """Make a batch blank but for the given sequence in position 0."""
-     seq = encode_to_onehot(seq)
-     batch = np.zeros((batch_size, seq.shape[0], seq.shape[1]), dtype=np.uint8)
-     batch[0] = seq
-     return batch
-
-def grouper(iterable, n, fillvalue=None):
-    "Collect data into fixed-length chunks or blocks"
-    # grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx
-    args = [iter(iterable)] * n
-    return zip_longest(fillvalue=fillvalue, *args)
-
-def filled_batch(iterable, batch_size=32, fillvalue=np.zeros((256, 4))):
-    """Make batches of the given size until running out of elements, then buffer."""
-    groups = grouper(iterable, batch_size, fillvalue=fillvalue)
-    while True:
-        yield np.asarray(next(groups))
-
 class Sequence(object):
     """ Encoding and variations on a sequence."""
     
@@ -95,14 +76,19 @@ class Sequence(object):
         """
         self.onehot = encode_to_onehot(nucleotides)   
     def __string__(self):
-        "ACTG representation of the sequence."
+        """ACTG representation of the sequence."""
         return encode_to_string(self.onehot)
+
     def __repr__(self):
-        " information about the sequence."
+        """Information about the sequence."""
         return 'Sequence() length ' + str(self.onehot.shape[0])
+ 
+    def logo(self, start=None, end=None):
+        """Plot a sequence logo from start to end."""
+        viz_sequence.plot_weights(self.onehot[start:end])
 
     def sequential_mutant_gen(self):
-    """generate sequences with a blank mutation."""
+        """Generate sequences with a blank mutation."""
         for idx in range(self.onehot.shape[0]):
             new_seq = np.copy(self.onehot)
             if idx == 0:
@@ -166,25 +152,41 @@ class Sequence(object):
                 yield new_seq
             done = True
 
-    def importance(self, model, viz=False, start=None, end=None, plot=False):
-        """ generate the gradient based importance of a sequence according to a given model.
+    def act_mutagenisis(self, TFmodel):
+        """Prediction value for a single base mutation in each position.
+         
+        Arguments:
+            TFmodel -- the keras model used to make predictions.
+        Returns:
+            mutant_preds -- predictions for each base in each position.
+        """
+        #get a mutant batch generator
+        mutant_gen = self.ngram_mutant_generator()
+        #approximate base importance as a large step 'gradient'
+        mutant_preds=list()
+        for batch in train_TFmodel.filled_batch(mutant_gen):
+            mutant_preds.append(TFmodel.get_act([batch, 0]))
+        #get the correct shape
+        mutant_preds = np.asarray(mutant_preds).reshape((-1, 4))
+        return mutant_preds
+
+    def importance(self, TFmodel, viz=False, start=None, end=None, plot=False):
+        """Generate the gradient based importance of a sequence according to a given model.
         
         Arguments:
-             model -- the keras model to run the seqeunce through.
+             TFmodel -- the keras model to run the seqeunce through.
              viz -- sequence logo of importance?
              start -- plot only past this nucleotide.
              end -- plot only to this nucleotide.
              plot -- generate a gain-loss plot?
-        
         Returns:
              diffs -- difference at each position to score.
              average_diffs -- base by base importance value. 
              masked_diffs -- importance for bases in origonal sequence.
         """
-         score = model.get_act(blank_batch(self.onehot), 0])[0][0][0]
-         mutant_preds = self.act_mutagenisis(model)
+         score = TFmodel.get_act(train_TFmodel.blank_batch(self.onehot), 0])[0][0][0]
+         mutant_preds = self.act_mutagenisis(TFmodel)
          diffs = mutant_preds - score
-
         # we want the difference for each nucleotide at a position minus the average difference at that position
         average_diffs = list()
         for base_seq, base_preds in zip(self.onehot, mutant_preds):
@@ -192,12 +194,9 @@ class Sequence(object):
             for idx in range(4):
                 this_base.append(base_preds[idx] - np.average(base_preds))
             average_diffs.append(list(this_base))
-
         average_diffs = np.asarray(average_diffs)
-
         # masked by the actual base
         masked_diffs = (self.onehot * average_diffs)
-
         if plot:
             # plot the gain-loss curve 
             plt.figure(figsize=(30,2.5))
@@ -207,7 +206,6 @@ class Sequence(object):
             plt.ylabel('importance (difference)')
             plt.xlabel('nucleotide')
             plt.show()
-
         if viz:
             print('Prediciton Difference')
             viz_sequence.plot_weights(average_diffs[start:end])
@@ -217,7 +215,79 @@ class Sequence(object):
             viz_sequence.plot_icweights(softmax(average_diffs[start:end])[0])
             print('Information Content of Softmax prediction difference')
             viz_sequence.plot_icweights(softmax(diffs[start:end])
+        return diffs, average_diffs, masked diffs
 
-    return all_diffs
+class SeqDist(Sequence):
+    """A sequence, but as a probability distribution."""
 
+    def __init__(self, distribution):
+        """Create a new sequence distribution object."""
+        if isinstance(seq, np.ndarray) and not (seq.dtype == np.uint8):
+            # right type!
+            self.distribution = distribution 
+            self.onehot = np.amax(distribution, axis=1)
+        else:
+            raise TypeError('Sequence is not an accepted type')
+ 
+    def __repr__(self):
+        """Information about the sequence."""
+        return 'DistributionSequence() length ' + str(self.onehot.shape[0])
 
+    def logo(self, start=None, end=None):
+         """Plot a sequence logo from start to end."""
+        viz_sequence.plot_weights(self.distribution[start:end])        
+
+    
+# process the memes
+def process_meme(meme_path, transform=True):
+    """Extract a meme distribution and process.
+   
+    Arguments:
+        meme_path -- file path to a .meme file.
+    Keywords:
+        transform -- apply normalization and a log transform?
+    Returns:
+        meme_list -- List of DistSeq() meme and reverse complements.
+    """
+    with open(meme_path, 'r') as infile:
+        meme_length = -1
+        memes = list()
+        for line in infile.readlines():
+            if 'letter-probability matrix' in line:
+                meme_length = int(line.split()[5])
+                this_meme_lines = list()
+            elif meme_length > 0:
+                this_meme_lines.append([float(item.strip()) for item in line.split()])
+                meme_length = meme_length - 1
+            elif meme_length == 0:
+                this_meme = np.asarray(this_meme_lines)
+                memes.append(this_meme)
+                meme_length = -1
+        if meme_length == 0:
+            this_meme = np.asarray(this_meme_lines)
+            memes.append(this_meme)
+            meme_length = -1
+    # add rcs of memes
+    rcs = list()
+    for meme in memes:
+        rcs.append(meme[::-1, ::-1])
+    memes = memes + rcs
+    #transofrm the memes
+    if transform:
+        psuedocount=0.05
+        transformed_memes = list()
+        for meme in memes:
+            meme = meme + psuedocount
+            norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
+            meme = np.log(meme/norms)
+            min = np.amin(meme)
+            meme = meme - min
+            transformed_memes.append(meme)
+    else:
+        transformed_memes = memes
+    #make distribution objects
+    meme_list = [SeqDist(distribution) for distribution in transformed_memes] 
+    return mem_list
+
+CTCF_memes = process_meme('/home/kal/TF_models/data/memes/CTCF.meme')
+mystery_memes = process_meme('/home/kal/TF_models/data/memes/mystery_motif.meme')
