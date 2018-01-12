@@ -66,7 +66,11 @@ def rc(seq):
         raise TypeError('Sequence is not an accepted type')
 
 class Sequence(object):
-    """ Encoding and variations on a sequence."""
+    """ Encoding and variations on a sequence.
+
+    Attributes:
+        seq -- onehot encoding of the sequence.
+    """
     
     def __init__(self, nucleotides):
         """ Create a sequence object.
@@ -74,23 +78,23 @@ class Sequence(object):
         Arguments:
             nucleotides -- Sequence in string, np.uint8, or one-hot form.
         """
-        self.onehot = encode_to_onehot(nucleotides)   
+        self.seq= encode_to_onehot(nucleotides)   
     def __string__(self):
         """ACTG representation of the sequence."""
-        return encode_to_string(self.onehot)
+        return encode_to_string(self.seq)
 
     def __repr__(self):
         """Information about the sequence."""
-        return 'Sequence() length ' + str(self.onehot.shape[0])
+        return 'Sequence() length ' + str(self.seq.shape[0])
  
     def logo(self, start=None, end=None):
         """Plot a sequence logo from start to end."""
-        viz_sequence.plot_weights(self.onehot[start:end])
+        viz_sequence.plot_weights(self.seq[start:end])
 
     def sequential_mutant_gen(self):
         """Generate sequences with a blank mutation."""
-        for idx in range(self.onehot.shape[0]):
-            new_seq = np.copy(self.onehot)
+        for idx in range(self.seq.shape[0]):
+            new_seq = np.copy(self.seq)
             if idx == 0:
                 new_seq[idx:idx+1] = np.fromstring('x', np.uint8)
             elif idx == len(seq)-1:
@@ -110,14 +114,14 @@ class Sequence(object):
         if padding != 'valid':
             print('Alternative padding not yet supported')
         while not done:
-            for idx in range(len(self.onehot)):
-                if n//2 <= idx <= len(self.onehot) - n//2 - 1:
+            for idx in range(len(self.seq)):
+                if n//2 <= idx <= len(self.seq) - n//2 - 1:
                     first = idx-n//2
                     last = idx+n//2+1
                     #standard case
                     ngrams = product(one_hots, repeat=n)
                     for gram in ngrams:
-                        new_seq = np.copy(self.onehot)
+                        new_seq = np.copy(self.seq)
                         new_seq[first:last] = np.asarray(gram)
                         yield new_seq
             done = True
@@ -132,10 +136,10 @@ class Sequence(object):
     """Generate every n length insertion."""
         done = False
         while not done:
-            for idx in range(len(sel.onehot)):
+            for idx in range(len(self.seq)):
                 ngrams = product(one_hots, repeat=n)
                 for gram in ngrams:
-                    new_seq = np.insert(self.onehot, idx, gram, axis=0)
+                    new_seq = np.insert(self.seq, idx, gram, axis=0)
                     yield new_seq[:256]
             done = True
 
@@ -145,19 +149,36 @@ class Sequence(object):
         while not done:
             ngrams = product(one_hots, repeat=n)
             gram = next(ngrams)
-            for start_idx in range(len(self.onehot)-n):
+            for start_idx in range(len(self.seq)-n):
                 del_idx = range(start_idx, start_idx+n)
-                new_seq = np.delete(self.onehot, del_idx, axis=0)
+                new_seq = np.delete(self.seq, del_idx, axis=0)
                 new_seq = np.append(new_seq, gram, axis=0)
                 yield new_seq
             done = True
+
+    def motif_insert_gen(self, motif, mode='same'):
+        """Insert a given motif at every position."""
+        #have i track the middle of the insertion
+        for i in range(seq.shape[0]):
+            new_seq = seq.copy()
+            if i-motif.shape[0]//2 < 0: # too early
+                 if mode == 'same':
+                     new_seq[0:i-motif.shape[0]//2 + motif.shape[0]] = motif[motif.shape[0]//2 - i:]
+                     yield new_seq
+            elif i-motif.shape[0]//2 + motif.shape[0] > seq.shape[0]: # too late
+                if mode == 'same':
+                    new_seq[i-motif.shape[0]//2:seq.shape[0]] = motif[:seq.shape[0]-i+motif.shape[0]//2]
+                    yield new_seq
+            else: # just right
+                new_seq[i-motif.shape[0]//2:i-motif.shape[0]//2 + motif.shape[0]] = motif
+                yield new_seq
 
     def act_mutagenisis(self, TFmodel):
         """Prediction value for a single base mutation in each position.
          
         Arguments:
             TFmodel -- the keras model used to make predictions.
-        Returns:
+        Outputs:
             mutant_preds -- predictions for each base in each position.
         """
         #get a mutant batch generator
@@ -179,24 +200,24 @@ class Sequence(object):
              start -- plot only past this nucleotide.
              end -- plot only to this nucleotide.
              plot -- generate a gain-loss plot?
-        Returns:
+        Outputs:
              diffs -- difference at each position to score.
              average_diffs -- base by base importance value. 
              masked_diffs -- importance for bases in origonal sequence.
         """
-         score = TFmodel.get_act(train_TFmodel.blank_batch(self.onehot), 0])[0][0][0]
+         score = TFmodel.get_act(train_TFmodel.blank_batch(self.seq), 0])[0][0][0]
          mutant_preds = self.act_mutagenisis(TFmodel)
          diffs = mutant_preds - score
         # we want the difference for each nucleotide at a position minus the average difference at that position
         average_diffs = list()
-        for base_seq, base_preds in zip(self.onehot, mutant_preds):
+        for base_seq, base_preds in zip(self.seq, mutant_preds):
             this_base = list()
             for idx in range(4):
                 this_base.append(base_preds[idx] - np.average(base_preds))
             average_diffs.append(list(this_base))
         average_diffs = np.asarray(average_diffs)
         # masked by the actual base
-        masked_diffs = (self.onehot * average_diffs)
+        masked_diffs = (self.seq * average_diffs)
         if plot:
             # plot the gain-loss curve 
             plt.figure(figsize=(30,2.5))
@@ -217,25 +238,66 @@ class Sequence(object):
             viz_sequence.plot_icweights(softmax(diffs[start:end])
         return diffs, average_diffs, masked diffs
 
+    def find_pwm(self, meme_library=CTCF_memes):
+        """Convolute a meme with the sequence.
+        
+        Keywords:
+             meme_library -- list of memes to use.
+        Output:
+             meme -- SeqDist() of the best matching meme.
+             position -- start position of the hit.
+             score -- correlation score.
+        """
+        # find the meme and location of the best match.
+        score = -np.inf
+        position = None
+        meme = None
+        for test_meme in meme_library:
+            corr = correlate2d(self.seq, test_meme.dist, mode='valid')
+            if np.max(corr) > score:
+                score = np.max(corr)
+                position = np.argmax(corr)
+                meme = test_meme
+        return meme, position, score
+ 
+     def run_pwm(self, meme=None, position=None)
+         """Get the pwm correlation score with a sequence.
+
+         Keywords:
+             meme -- SeqDist() of the best matching meme, or library of memes to test.
+             position -- start position of the hit.
+         Outputs:
+             score -- correlation score.
+         """
+         if meme==None:
+             # we need to find everything
+             return self.find_pwm()[2]
+         else if position==None or isinstance(meme, list):
+             # we have the meme/memelist
+             return self.find_pwm(meme_library=meme)[2]
+         else:
+             # just get the score
+             return correlate2d(self.seq[position:position+meme.shape[0]], meme.dist, mode='valid')
+
 class SeqDist(Sequence):
-    """A sequence, but as a probability distribution."""
+    """A sequence, but as a probability distribution.
+
+    Attributes:
+        seq -- probability distribution of bases. 
+    """
+
 
     def __init__(self, distribution):
         """Create a new sequence distribution object."""
         if isinstance(seq, np.ndarray) and not (seq.dtype == np.uint8):
             # right type!
-            self.distribution = distribution 
-            self.onehot = np.amax(distribution, axis=1)
+            self.seq = distribution 
         else:
             raise TypeError('Sequence is not an accepted type')
  
     def __repr__(self):
         """Information about the sequence."""
-        return 'DistributionSequence() length ' + str(self.onehot.shape[0])
-
-    def logo(self, start=None, end=None):
-         """Plot a sequence logo from start to end."""
-        viz_sequence.plot_weights(self.distribution[start:end])        
+        return 'DistributionSequence() length ' + str(self.seq.shape[0])
 
     
 # process the memes
@@ -246,7 +308,7 @@ def process_meme(meme_path, transform=True):
         meme_path -- file path to a .meme file.
     Keywords:
         transform -- apply normalization and a log transform?
-    Returns:
+    Outputs:
         meme_list -- List of DistSeq() meme and reverse complements.
     """
     with open(meme_path, 'r') as infile:
@@ -287,7 +349,7 @@ def process_meme(meme_path, transform=True):
         transformed_memes = memes
     #make distribution objects
     meme_list = [SeqDist(distribution) for distribution in transformed_memes] 
-    return mem_list
+    return meme_list
 
 CTCF_memes = process_meme('/home/kal/TF_models/data/memes/CTCF.meme')
 mystery_memes = process_meme('/home/kal/TF_models/data/memes/mystery_motif.meme')
