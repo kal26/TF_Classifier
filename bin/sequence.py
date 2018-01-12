@@ -176,21 +176,6 @@ class Sequence(object):
                 new_seq[i-motif.shape[0]//2:i-motif.shape[0]//2 + motif.shape[0]] = motif
                 yield new_seq
 
-    def act_mutagenisis(self, TFmode, generator):
-        """Prediction value for the sequences in the generator.
-         
-        Arguments:
-            TFmodel -- the keras model used to make predictions.
-            generator -- series of sequences to mutate.
-        Outputs:
-            mutant_preds -- predictions for each sequence generated (might have buffer).
-        """
-        #approximate base importance as a large step 'gradient'
-        mutant_preds=list()
-        for batch in train_TFmodel.filled_batch(generator):
-            mutant_preds.append(TFmodel.get_act(batch))
-        return np.asarray(mutant_preds).flatten()
-
     def importance(self, TFmodel, viz=False, start=None, end=None, plot=False):
         """Generate the gradient based importance of a sequence according to a given model.
         
@@ -206,7 +191,7 @@ class Sequence(object):
              masked_diffs -- importance for bases in origonal sequence.
         """
          score = TFmodel.get_act(self)
-         mutant_preds = self.act_mutagenisis(TFmodel)
+         mutant_preds = TFmodel.get_act(self.ngram_mutant_gen())
          #get the right shape
          mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
          diffs = mutant_preds - score
