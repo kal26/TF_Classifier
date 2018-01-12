@@ -17,7 +17,8 @@ def encode_to_string(seq):
             return seq.tostring().decode('UTF-8')
         else:
         #onehot array
-            return np.asarray([one_hot_encoder[i] for i in np.nonzero(seq)[1]]).tostring().decode('UTF-8')
+            indicies = np.argmax(seq, axis=1)
+            return np.asarray([one_hot_encoder[i] for i in indicies]).tostring().decode('UTF-8')
     else:
         raise TypeError('Sequence is not an accepted type')
 
@@ -31,7 +32,8 @@ def encode_to_uint8(seq):
             return seq
         else:
         #onehot array
-            return np.asarray([one_hot_encoder[i] for i in np.nonzero(seq)[1]])
+            indicies = np.argmax(seq, axis=1)
+            return np.asarray([one_hot_encoder[i] for i in indicies])
     else:
         raise TypeError('Sequence is not an accepted type')
 
@@ -79,6 +81,7 @@ class Sequence(object):
             nucleotides -- Sequence in string, np.uint8, or one-hot form.
         """
         self.seq= encode_to_onehot(nucleotides)   
+
     def __string__(self):
         """ACTG representation of the sequence."""
         return encode_to_string(self.seq)
@@ -159,8 +162,8 @@ class Sequence(object):
     def motif_insert_gen(self, motif, mode='same'):
         """Insert a given motif at every position."""
         #have i track the middle of the insertion
-        for i in range(seq.shape[0]):
-            new_seq = seq.copy()
+        for i in range(self.seq.shape[0]):
+            new_seq = self.seq.copy()
             if i-motif.shape[0]//2 < 0: # too early
                  if mode == 'same':
                      new_seq[0:i-motif.shape[0]//2 + motif.shape[0]] = motif[motif.shape[0]//2 - i:]
@@ -173,23 +176,20 @@ class Sequence(object):
                 new_seq[i-motif.shape[0]//2:i-motif.shape[0]//2 + motif.shape[0]] = motif
                 yield new_seq
 
-    def act_mutagenisis(self, TFmodel):
-        """Prediction value for a single base mutation in each position.
+    def act_mutagenisis(self, TFmode, generator):
+        """Prediction value for the sequences in the generator.
          
         Arguments:
             TFmodel -- the keras model used to make predictions.
+            generator -- series of sequences to mutate.
         Outputs:
-            mutant_preds -- predictions for each base in each position.
+            mutant_preds -- predictions for each sequence generated (might have buffer).
         """
-        #get a mutant batch generator
-        mutant_gen = self.ngram_mutant_generator()
         #approximate base importance as a large step 'gradient'
         mutant_preds=list()
-        for batch in train_TFmodel.filled_batch(mutant_gen):
-            mutant_preds.append(TFmodel.get_act([batch, 0]))
-        #get the correct shape
-        mutant_preds = np.asarray(mutant_preds).reshape((-1, 4))
-        return mutant_preds
+        for batch in train_TFmodel.filled_batch(generator):
+            mutant_preds.append(TFmodel.get_act(batch))
+        return np.asarray(mutant_preds).flatten()
 
     def importance(self, TFmodel, viz=False, start=None, end=None, plot=False):
         """Generate the gradient based importance of a sequence according to a given model.
@@ -205,8 +205,10 @@ class Sequence(object):
              average_diffs -- base by base importance value. 
              masked_diffs -- importance for bases in origonal sequence.
         """
-         score = TFmodel.get_act(train_TFmodel.blank_batch(self.seq), 0])[0][0][0]
+         score = TFmodel.get_act(self)
          mutant_preds = self.act_mutagenisis(TFmodel)
+         #get the right shape
+         mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
          diffs = mutant_preds - score
         # we want the difference for each nucleotide at a position minus the average difference at that position
         average_diffs = list()
@@ -286,7 +288,6 @@ class SeqDist(Sequence):
         seq -- probability distribution of bases. 
     """
 
-
     def __init__(self, distribution):
         """Create a new sequence distribution object."""
         if isinstance(seq, np.ndarray) and not (seq.dtype == np.uint8):
@@ -298,6 +299,17 @@ class SeqDist(Sequence):
     def __repr__(self):
         """Information about the sequence."""
         return 'DistributionSequence() length ' + str(self.seq.shape[0])
+
+    def discrete_gen(self, count):
+        """Create a generator of discrete sequecnes."""
+        while count > 0:
+            yield self.disctrete_seq()
+            count = count - 1
+
+    def discrete_seq(self):
+        """Return a discrete sequence samples from the continuous distribuiton."""
+        pass
+        # add this!!
 
     
 # process the memes
