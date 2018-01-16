@@ -190,8 +190,8 @@ class Sequence(object):
              average_diffs -- base by base importance value. 
              masked_diffs -- importance for bases in origonal sequence.
         """
-         score = TFmodel.get_act(self)
-         mutant_preds = TFmodel.get_act(self.ngram_mutant_gen())
+         score = TFmodel.get_activation(self)
+         mutant_preds = TFmodel.get_activations(self.ngram_mutant_gen())
          #get the right shape
          mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
          diffs = mutant_preds - score
@@ -285,26 +285,28 @@ class SeqDist(Sequence):
         """Information about the sequence."""
         return 'DistributionSequence() length ' + str(self.seq.shape[0])
 
-    def discrete_gen(self, count):
-        """Create a generator of discrete sequecnes."""
-        while count > 0:
+    def discrete_gen(self):
+        """Create a generator of discrete sequences."""
+        while True: 
             yield self.disctrete_seq()
-            count = count - 1
 
     def discrete_seq(self):
         """Return a discrete sequence samples from the continuous distribuiton."""
-        pass
-        # add this!!
+        seq = []
+        for base in distribution:
+            idx = np.random.choice(range(4), p=base)
+            seq.append(one_hots[idx])
+        return np.asarray(seq)
 
     
 # process the memes
-def process_meme(meme_path, transform=True):
+def process_meme(meme_path, transform=False):
     """Extract a meme distribution and process.
    
     Arguments:
         meme_path -- file path to a .meme file.
     Keywords:
-        transform -- apply normalization and a log transform?
+        transform -- apply normalization and a log transform or use the pre-generated log-odds matrix.
     Outputs:
         meme_list -- List of DistSeq() meme and reverse complements.
     """
@@ -312,7 +314,7 @@ def process_meme(meme_path, transform=True):
         meme_length = -1
         memes = list()
         for line in infile.readlines():
-            if 'letter-probability matrix' in line:
+            if (transform and ('letter-probability matrix' in line)) or (not transform and 'log-odds matrix' in line):
                 meme_length = int(line.split()[5])
                 this_meme_lines = list()
             elif meme_length > 0:

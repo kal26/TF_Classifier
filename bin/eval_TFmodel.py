@@ -72,6 +72,7 @@ class TFmodel(object):
         #assume iterable
         try:
             test = next(generator)
+            count = 1
             if isinstance(test, sequence.SeqDist):
                 dist = True
                 #distribution
@@ -89,6 +90,7 @@ class TFmodel(object):
                 def stackgen():
                     yield test
                     for elem in generator:
+                        count = count + 1
                         yield elem
                 g = stackgen()
                 batch_gen = train_TFmodel.filled_batch(g)
@@ -101,10 +103,85 @@ class TFmodel(object):
                 ids = np.arange(len(activation))//distribution_repeats
                 outact = np.bincount(ids, activations)/np.bincount(ids) 
                 return outact
-            return activaton
+            return activaton[:count]
         except TypeError:
             #acutally not iterable
             return self.get_act([train_TFmodel.blank_batch(generator), 0])[0][0] 
             
-    def dream(seq, num_iterations=20):
-        """Dream a sequence for the given number of steps."""
+    def dream(seq, iterate_op=None, num_iterations=20):
+        """Dream a sequence for the given number of steps.
+         
+        Arguments:
+            seq -- SeqDist object to iterate over.
+        Keywords:
+            iterate_op -- operation to get the update step, default is maximize output. 
+        Returns:
+            dream_seq -- result of the iterations. 
+        """
+        # get an iterate operation
+        if iterate_op = None:
+            iterate_op = self.build_iterate()
+        # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
+        if np.count_nonzero(seq.dist) != np.size:
+            dream_seq = SeqDist(softmax(seq.dist + .000001))
+        else:
+            dream_seq = SeqDist(seq.dist)
+        # find a good step size 
+        update_grads = iterate_op([next(trainTF_model.filled_batch(dream_seq.discrete_gen()))])
+        step = 8/np.amax(update_grads)
+        # apply the updates
+        for i in range(num_iterations):
+            batch_gen = trainTF_model.filled_batch(dream_seq.discrete_gen())
+            update_grads = iterate_op([next(batch_gen)])
+            # we apply the update in log space so a zero update won't change anything
+            update = np.average(update_grads, axis=0)*dream_seq.dist*step
+            dream_seq = SeqDist(softmax(np.log(dream_seq.dist + update))) 
+        return dream_seq
+
+    def build_iterate(self, layer_name='final_output', filter_index=0):
+        """ Build a interation operation for use with dreaming method.
+     
+        Keywords:
+            
+
+    def localize(row, genome):
+        """ Find the section of a bed file row giving maximum acitvation.
+
+        Arguments:
+            row -- bed file row.
+            genome -- genome associated with the bed file. 
+        Output:
+            max_tile -- Sequence object for the maximum predicting 256 bp region.
+            max_pred -- prediction value for the row. 
+        """
+        # break the sequence into overlapping tiles
+        tile_seqs = list()
+        num_tiles = int((row['end']-row['start']) / input_window) + ((row['end']-row['start']) % input_window > 0)
+        for idx in range(num_tiles):
+            if row['start'] + idx*input_window - input_window//2 > 0:
+                seq = genome[row['chr']][row['start'] + idx*input_window - input_window//2:row['start'] + (idx+1)*input_window - input_window//2].lower()
+                tile_seqs.append(seqeunce.encode_to_onehot(seq))
+            else:
+                buffered_seq = np.zeros((256,4))
+                buffered_seq[:row['start'] + (idx+1)*input_window - input_window//2] = genome[row['chr']][0:row['start'] + (idx+1)*input_window - input_window//2]
+                tile_seqs.append(seqeunce.encode_to_onehot(buffered_seq))
+            seq = genome[row['chr']][row['start'] + idx*input_window:row['start'] + (idx+1)*input_window].lower()
+            tile_seqs.append(seqeunce.encode_to_onehot(seq))
+        #configure the tiled sequences
+        tile_seqs= np.asarray(tile_seqs)
+        tile_iter = iter(tile_seqs)
+        # get a batch generator
+        batches = train_TFmodel.filled_batch(tile_iter)
+        # figure out where the max prediction is coming from
+        preds = list()
+        for batch in batches:
+            preds.append(self.predict_on_batch(batch))
+        preds = np.asarray(preds).reshape((-1))[:tile_seqs.shape[0]]
+        # get a tile centered there
+        max_pred = np.max(preds)
+        max_tile = tile_seq[np.argmax(preds)]
+        return Sequence(max_tile), max_pred
+        
+
+
+
