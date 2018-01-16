@@ -156,7 +156,6 @@ def plot_icweights(array, figsize=(20,2),
                  colors=colors,
                  plot_funcs=plot_funcs,
                  highlight=highlight)
-    return weighted_array
 
 def information(distribution):
     max_ic = math.log(len(distribution), 2)

@@ -5,36 +5,7 @@ import numpy as np
 import train_TFmodel
 import sequence
 from keras import backend as K
-
-#helper functions
-
-def normalize(x):
-    """Utility function to normalize a tensor by its L2 norm."""
-    return x / (K.sqrt(K.mean(K.square(x))) + 1e-5)
-
-def rejection(seq_a, seq_b):
-    """utiliy function to compute rejection of a from b"""
-    out = list()
-    for a, b in zip(seq_a, seq_b):
-        if np.linalg.norm(b) == 0:
-            out.append(a)
-        else:
-            out.append(a - ((np.dot(a, b) / (np.linalg.norm(b)**2)) * b))
-    return np.asarray(out)
-
-def softmax(y):
-    """Take softmax of the given sequence or batch at the lowest array level."""
-    if y.ndim == 1:
-        return _softmax(y)
-    else:
-        return np.asarray([softmax(small) for small in y])
- 
-
-def _softmax(x):
-    """Take softmax of an array."""
-    e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum(axis=0) # only difference
-
+import helper
 
 class TFmodel(object):
     """Transcription factor classification keras model."""
@@ -123,26 +94,49 @@ class TFmodel(object):
             iterate_op = self.build_iterate()
         # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
         if np.count_nonzero(seq.dist) != np.size:
-            dream_seq = SeqDist(softmax(seq.dist + .000001))
+            dream_seq = SeqDist(helper.softmax(seq.dist + .000001))
         else:
             dream_seq = SeqDist(seq.dist)
         # find a good step size 
-        update_grads = iterate_op([next(trainTF_model.filled_batch(dream_seq.discrete_gen()))])
+        update_grads = iterate_op([next(trainTF_model.filled_batch(dream_seq.discrete_gen())), 0])
         step = 8/np.amax(update_grads)
         # apply the updates
         for i in range(num_iterations):
             batch_gen = trainTF_model.filled_batch(dream_seq.discrete_gen())
-            update_grads = iterate_op([next(batch_gen)])
+            update_grads = iterate_op([next(batch_gen), 0])
             # we apply the update in log space so a zero update won't change anything
             update = np.average(update_grads, axis=0)*dream_seq.dist*step
-            dream_seq = SeqDist(softmax(np.log(dream_seq.dist + update))) 
+            dream_seq = SeqDist(helper.softmax(np.log(dream_seq.dist + update))) 
         return dream_seq
 
     def build_iterate(self, layer_name='final_output', filter_index=0):
         """ Build a interation operation for use with dreaming method.
      
         Keywords:
-            
+           layer_name -- layer dictionary enry to get the output from.
+           filter_index -- inex of the filter to pull from the layer. 
+        Output:
+            iterate_op -- iteration operation returning gradients.
+        """
+        # set a placeholder input
+        encoded_seq = self.model.input
+        # build a function that sumes the activation of the nth filter of the layer considered
+        if layer_name == 'final_output':
+            activations = self.model.output
+            # compute the gradient of the input picture wrt this loss
+            grads = K.gradients(K.mean(activations), encoded_seq)[0]
+        else:
+            layer_output = layer_dict[layer_name].output
+            activations = layer_output[:, :, filter_index] #each batch and nuceotide at this neuron.
+            # forward and reverse sequences
+            combined_activation = K.mean(np.maximum(activations[:32], activations[32:]))
+            # compute the gradient of the input picture wrt this loss
+            grads = K.gradients(combined_activation, encoded_seq)[0]
+            # normalization trick: we normalize the gradient - not sure if I should use this
+            # grads /= (K.sqrt(K.mean(K.square(grads))) + 1e-5)
+        # this function returns the loss and grads given the input picture
+        iterate_op = K.function([encoded_seq, K.learning_phase()], [grads])
+        return iterate 
 
     def localize(row, genome):
         """ Find the section of a bed file row giving maximum acitvation.

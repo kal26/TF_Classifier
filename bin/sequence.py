@@ -3,6 +3,8 @@ import numpy as np
 from itertools import zip_longest, product, chain, repeat
 import viz_sequence
 import train_TFmodel
+import helper
+from scipy.signal import correlate2d
 
 one_hot_encoder = np.fromstring('acgt', np.uint8)
 
@@ -11,7 +13,7 @@ def encode_to_string(seq):
     "return a string from string, uint8, or onehot"
     if isinstance(seq, str):
         return seq
-    else if isinstance(seq, np.ndarray):
+    elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
             return seq.tostring().decode('UTF-8')
@@ -26,7 +28,7 @@ def encode_to_uint8(seq):
     "return a uint8 from string, uint8, or onehot"
     if isinstance(seq, str):
         return np.fromstring(seq, dtype=np.uint8)
-    else if isinstance(seq, np.ndarray):
+    elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
             return seq
@@ -41,7 +43,7 @@ def encode_to_onehot(seq):
     "return a onehot from string, uint8, or onehot"
     if isinstance(seq, str):
         return np.asarray([np.equal(char, one_hot_encoder) for char in np.fromstring(seq, dtype=np.uint8)])
-    else if isinstance(seq, np.ndarray):
+    elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
             return np.asarray([np.equal(char, one_hot_encoder) for char in seq])
@@ -57,7 +59,7 @@ def rc(seq):
     rc = onehot[:, ::-1, ::-1]
     if isinstance(seq, str):
         return encode_to_string(rc)
-    else if isinstance(seq, np.ndarray):
+    elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
             return encode_to_uint8(rc)
@@ -98,15 +100,10 @@ class Sequence(object):
         """Generate sequences with a blank mutation."""
         for idx in range(self.seq.shape[0]):
             new_seq = np.copy(self.seq)
-            if idx == 0:
-                new_seq[idx:idx+1] = np.fromstring('x', np.uint8)
-            elif idx == len(seq)-1:
-                new_seq[idx-1:idx] = np.fromstring('x', np.uint8)
-            else:
-                new_seq[idx-1:idx+1] = np.fromstring('x', np.uint8)
+            new_seq[idx] = np.fromstring('x', np.uint8)
             yield new_seq
 
-    def ngram_mutant_gen(self, n=5, padding='valid'):
+    def ngram_mutant_gen(self, n=1, padding='valid'):
         """ Generate ngram mutants trying every possible amino acid combination of a length n in a sequence.
 
         Keywords:
@@ -122,10 +119,10 @@ class Sequence(object):
                     first = idx-n//2
                     last = idx+n//2+1
                     #standard case
-                    ngrams = product(one_hots, repeat=n)
+                    ngrams = product(one_hot_encoder, repeat=n)
                     for gram in ngrams:
                         new_seq = np.copy(self.seq)
-                        new_seq[first:last] = np.asarray(gram)
+                        new_seq[first:last] = encode_to_onehot(np.asarray(gram))
                         yield new_seq
             done = True
 
@@ -136,26 +133,26 @@ class Sequence(object):
                 yield mut2_seq
 
     def insertion_mutant_gen(self, n=1):
-    """Generate every n length insertion."""
+        """Generate every n length insertion."""
         done = False
         while not done:
             for idx in range(len(self.seq)):
-                ngrams = product(one_hots, repeat=n)
+                ngrams = product(one_hot_encoder, repeat=n)
                 for gram in ngrams:
-                    new_seq = np.insert(self.seq, idx, gram, axis=0)
+                    new_seq = np.insert(self.seq, idx, encode_to_onehot(np.asarray(gram)), axis=0)
                     yield new_seq[:256]
             done = True
 
     def deletion_mutant_gen(self, n=1):
-    """Generate every deletion mutant."""
+        """Generate every deletion mutant."""
         done = False
         while not done:
-            ngrams = product(one_hots, repeat=n)
+            ngrams = product(one_hot_encoder, repeat=n)
             gram = next(ngrams)
             for start_idx in range(len(self.seq)-n):
                 del_idx = range(start_idx, start_idx+n)
                 new_seq = np.delete(self.seq, del_idx, axis=0)
-                new_seq = np.append(new_seq, gram, axis=0)
+                new_seq = np.append(new_seq, encode_to_onehot(np.asarray(gram)), axis=0)
                 yield new_seq
             done = True
 
@@ -168,9 +165,9 @@ class Sequence(object):
                  if mode == 'same':
                      new_seq[0:i-motif.shape[0]//2 + motif.shape[0]] = motif[motif.shape[0]//2 - i:]
                      yield new_seq
-            elif i-motif.shape[0]//2 + motif.shape[0] > seq.shape[0]: # too late
+            elif i-motif.shape[0]//2 + motif.shape[0] > new_seq.shape[0]: # too late
                 if mode == 'same':
-                    new_seq[i-motif.shape[0]//2:seq.shape[0]] = motif[:seq.shape[0]-i+motif.shape[0]//2]
+                    new_seq[i-motif.shape[0]//2:new_seq.shape[0]] = motif[:new_seq.shape[0]-i+motif.shape[0]//2]
                     yield new_seq
             else: # just right
                 new_seq[i-motif.shape[0]//2:i-motif.shape[0]//2 + motif.shape[0]] = motif
@@ -190,11 +187,11 @@ class Sequence(object):
              average_diffs -- base by base importance value. 
              masked_diffs -- importance for bases in origonal sequence.
         """
-         score = TFmodel.get_activation(self)
-         mutant_preds = TFmodel.get_activations(self.ngram_mutant_gen())
-         #get the right shape
-         mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
-         diffs = mutant_preds - score
+        score = TFmodel.get_activation(self)
+        mutant_preds = TFmodel.get_activations(self.ngram_mutant_gen())
+        #get the right shape
+        mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
+        diffs = mutant_preds - score
         # we want the difference for each nucleotide at a position minus the average difference at that position
         average_diffs = list()
         for base_seq, base_preds in zip(self.seq, mutant_preds):
@@ -220,13 +217,13 @@ class Sequence(object):
             print('Masked average prediciton difference')
             viz_sequence.plot_weights(masked_diffs[start:end])
             print('Information Content of Softmax average prediction difference')
-            viz_sequence.plot_icweights(softmax(average_diffs[start:end])[0])
+            viz_sequence.plot_icweights(helper.softmax(average_diffs[start:end]))
             print('Information Content of Softmax prediction difference')
-            viz_sequence.plot_icweights(softmax(diffs[start:end])
-        return diffs, average_diffs, masked diffs
-
-    def find_pwm(self, meme_library=CTCF_memes):
-        """Convolute a meme with the sequence.
+            viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
+        return diffs, average_diffs, masked_diffs
+    
+    def find_pwm(self, meme_library=None):
+        """ Convolute a meme with the sequence.
         
         Keywords:
              meme_library -- list of memes to use.
@@ -235,36 +232,38 @@ class Sequence(object):
              position -- start position of the hit.
              score -- correlation score.
         """
+        if meme_library==None:
+             meme_library = CTCF_memes
         # find the meme and location of the best match.
         score = -np.inf
         position = None
         meme = None
         for test_meme in meme_library:
-            corr = correlate2d(self.seq, test_meme.dist, mode='valid')
+            corr = correlate2d(self.seq, test_meme.pwm, mode='valid')
             if np.max(corr) > score:
                 score = np.max(corr)
                 position = np.argmax(corr)
                 meme = test_meme
         return meme, position, score
  
-     def run_pwm(self, meme=None, position=None)
-         """Get the pwm correlation score with a sequence.
+    def run_pwm(self, meme=None, position=None):
+        """Get the pwm correlation score with a sequence.
 
-         Keywords:
-             meme -- SeqDist() of the best matching meme, or library of memes to test.
-             position -- start position of the hit.
-         Outputs:
-             score -- correlation score.
-         """
-         if meme==None:
-             # we need to find everything
-             return self.find_pwm()[2]
-         else if position==None or isinstance(meme, list):
-             # we have the meme/memelist
-             return self.find_pwm(meme_library=meme)[2]
-         else:
-             # just get the score
-             return correlate2d(self.seq[position:position+meme.shape[0]], meme.dist, mode='valid')
+        Keywords:
+            meme -- SeqDist() of the best matching meme, or library of memes to test.
+            position -- start position of the hit.
+        Outputs:
+            score -- correlation score.
+        """
+        if meme==None:
+            # we need to find everything
+            return self.find_pwm()[2]
+        elif position==None or isinstance(meme, list):
+            # we have the meme/memelist
+            return self.find_pwm(meme_library=meme)[2]
+        else:
+            # just get the score
+            return correlate2d(self.seq[position:position+meme.shape[0]], meme.pwm, mode='valid')
 
 class SeqDist(Sequence):
     """A sequence, but as a probability distribution.
@@ -275,7 +274,7 @@ class SeqDist(Sequence):
 
     def __init__(self, distribution):
         """Create a new sequence distribution object."""
-        if isinstance(seq, np.ndarray) and not (seq.dtype == np.uint8):
+        if isinstance(distribution, np.ndarray) and not (distribution.dtype == np.uint8):
             # right type!
             self.seq = distribution 
         else:
@@ -283,7 +282,11 @@ class SeqDist(Sequence):
  
     def __repr__(self):
         """Information about the sequence."""
-        return 'DistributionSequence() length ' + str(self.seq.shape[0])
+        return 'SeqDist() length ' + str(self.seq.shape[0])
+
+    def logo(self, start=None, end=None):
+        """Plot a sequence logo from start to end."""
+        viz_sequence.plot_icweights(self.seq[start:end])
 
     def discrete_gen(self):
         """Create a generator of discrete sequences."""
@@ -292,14 +295,22 @@ class SeqDist(Sequence):
 
     def discrete_seq(self):
         """Return a discrete sequence samples from the continuous distribuiton."""
-        seq = []
-        for base in distribution:
-            idx = np.random.choice(range(4), p=base)
-            seq.append(one_hots[idx])
-        return np.asarray(seq)
+        discrete = [np.random.choice(range(4), p=base) for base in self.seq]
+        return np.asarray(discrete)
 
+class Meme(SeqDist):
+    """A position weight matrix.
+   
+    Attirbutes:
+        seq -- frequency representation of the seqeunce.
+        pwm -- log-odds representaiton of the motif.    
+   """
+
+    def __init__(self, dist, pwm):
+        """Create a new Meme object."""
+        self.seq = dist
+        self.pwm = pwm
     
-# process the memes
 def process_meme(meme_path, transform=False):
     """Extract a meme distribution and process.
    
@@ -308,13 +319,15 @@ def process_meme(meme_path, transform=False):
     Keywords:
         transform -- apply normalization and a log transform or use the pre-generated log-odds matrix.
     Outputs:
-        meme_list -- List of DistSeq() meme and reverse complements.
+        meme_list -- List of SeqDist() meme and reverse complements.
     """
     with open(meme_path, 'r') as infile:
         meme_length = -1
-        memes = list()
+        meme_dists = list()
+        meme_lods = list()
+        # read for the frequencies
         for line in infile.readlines():
-            if (transform and ('letter-probability matrix' in line)) or (not transform and 'log-odds matrix' in line):
+            if 'letter-probability matrix' in line:
                 meme_length = int(line.split()[5])
                 this_meme_lines = list()
             elif meme_length > 0:
@@ -322,33 +335,55 @@ def process_meme(meme_path, transform=False):
                 meme_length = meme_length - 1
             elif meme_length == 0:
                 this_meme = np.asarray(this_meme_lines)
-                memes.append(this_meme)
+                meme_dists.append(this_meme)
                 meme_length = -1
         if meme_length == 0:
             this_meme = np.asarray(this_meme_lines)
-            memes.append(this_meme)
+            meme_dists.append(this_meme)
             meme_length = -1
-    # add rcs of memes
-    rcs = list()
-    for meme in memes:
-        rcs.append(meme[::-1, ::-1])
-    memes = memes + rcs
+        # add rcs of memes
+        rcs = list()
+        for meme in meme_dists:
+            rcs.append(meme[::-1, ::-1])
+        meme_dists = meme_dists + rcs
+    with open(meme_path, 'r') as infile:
+        # read for the pwms
+        for line in infile.readlines():
+            if 'log-odds matrix' in line:
+                meme_length = int(line.split()[5])
+                this_meme_lines = list()
+            elif meme_length > 0:
+                this_meme_lines.append([float(item.strip()) for item in line.split()])
+                meme_length = meme_length - 1
+            elif meme_length == 0:
+                this_meme = np.asarray(this_meme_lines)
+                meme_lods.append(this_meme)
+                meme_length = -1
+        if meme_length == 0:
+            this_meme = np.asarray(this_meme_lines)
+            meme_lods.append(this_meme)
+            meme_length = -1
+        # add rcs of memes
+        rcs = list()
+        for meme in meme_lods:
+            rcs.append(meme[::-1, ::-1])
+        meme_lods = meme_lods + rcs
     #transofrm the memes
-    if transform:
-        psuedocount=0.05
-        transformed_memes = list()
-        for meme in memes:
-            meme = meme + psuedocount
-            norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
-            meme = np.log(meme/norms)
-            min = np.amin(meme)
-            meme = meme - min
-            transformed_memes.append(meme)
-    else:
-        transformed_memes = memes
+   # if transform:
+   #     psuedocount=0.05
+   #     transformed_memes = list()
+   #     for meme in memes:
+   #         meme = meme + psuedocount
+   #         norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
+   #         meme = np.log(meme/norms)
+   #         min = np.amin(meme)
+   #         meme = meme - min
+   #         transformed_memes.append(meme)
+   # else:
+   #     transformed_memes = memes
     #make distribution objects
-    meme_list = [SeqDist(distribution) for distribution in transformed_memes] 
+    meme_list = [Meme(distribution, log_odds) for distribution, log_odds in zip(meme_dists, meme_lods)]
     return meme_list
 
 CTCF_memes = process_meme('/home/kal/TF_models/data/memes/CTCF.meme')
-mystery_memes = process_meme('/home/kal/TF_models/data/memes/mystery_motif.meme')
+mystery_memes = process_meme('/home/kal/TF_models/data/memes/mystery_motif.meme') 
