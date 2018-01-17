@@ -277,7 +277,7 @@ class Meme(SeqDist):
 
     def __repr__(self):
         """Information about the sequence."""
-        return 'Meme() length ' + str(self.shape[0])
+        return 'Meme() length ' + str(self.seq.shape[0])
 
     
 def process_meme(meme_path, transform=False):

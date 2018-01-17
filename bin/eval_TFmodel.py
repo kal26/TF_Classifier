@@ -93,7 +93,21 @@ class TFmodel(object):
             return activation
         except TypeError:
             #acutally not iterable
-            return self.get_act([train_TFmodel.blank_batch(generator.seq), 0])[0][0] 
+            if isinstance(generator, sequence.SeqDist):
+                dist = True
+                #distribution
+                #converts distributions to discrete sequences and averages
+                def gen():
+                    for i in range(distribution_repeats):
+                        yield generator.discrete_seq()
+                g = gen()
+                batch_gen = train_TFmodel.filled_batch(g)
+                for batch in batch_gen:
+                    activation.append(self.get_act([batch, 0]))
+                activation = np.asarray(activation).flatten()
+                return np.sum(activation)/activation.shape[0]
+            else:
+                return self.get_act([train_TFmodel.blank_batch(generator.seq), 0])[0][0][0] 
             
     def dream(self, seq, iterate_op=None, num_iterations=20, viz=False):
         """Dream a sequence for the given number of steps.
@@ -111,13 +125,14 @@ class TFmodel(object):
         if iterate_op == None:
             iterate_op = self.build_iterate()
         # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
-        if np.count_nonzero(seq.seq) != np.size:
-            dream_seq = sequence.SeqDist(helper.softmax(2*seq.seq + 1))
+        if np.count_nonzero(seq.seq) != np.size(seq.seq):
+            dream_seq = sequence.SeqDist(helper.softmax(3*seq.seq + 1))
         else:
             dream_seq = sequence.SeqDist(seq.seq)
         if viz:
             print('Inital sequence')
             viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
         # find a good step size 
         batch_gen = train_TFmodel.filled_batch(dream_seq.discrete_gen())
         update_grads = iterate_op([next(batch_gen), 0])
@@ -127,13 +142,113 @@ class TFmodel(object):
             update_grads = iterate_op([next(batch_gen), 0])[0]
             # we apply the update in log space so a zero update won't change anything
             update = np.average(update_grads, axis=0)*dream_seq.seq*step
-            dream_seq = sequence.SeqDist(helper.softmax(np.log(dream_seq.seq + update))) 
+            dream_seq = np.log(dream_seq.seq) + update
+            dream_seq = sequence.SeqDist(helper.softmax(dream_seq)) 
             if i%(num_iterations//4) == 0 and viz:
                 print('Sequence after ' + str(i) + ' iterations')
                 viz_sequence.plot_icweights(dream_seq.seq)
         if viz:
             print('Final sequence')
             viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+        return dream_seq
+
+    def adversarial_dream(self, seq, iterate_op=None, num_iterations=20, viz=False):
+        """Dream a sequence for the given number of steps.
+         
+        Arguments:
+            seq -- SeqDist object to iterate over.
+        Keywords:
+            iterate_op -- operation to get the update step, default is maximize output. 
+            num_iterations -- how many iterations to increment over.
+            viz -- sequence logo of importance?
+        Returns:
+            dream_seq -- result of the iterations. 
+        """
+        # get an iterate operation
+        if iterate_op == None:
+            iterate_op = self.build_iterate()
+        # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
+        if np.count_nonzero(seq.seq) != np.size(seq.seq):
+            dream_seq = sequence.SeqDist(helper.softmax(3*seq.seq + 1))
+        else:
+            dream_seq = sequence.SeqDist(seq.seq)
+        if viz:
+            print('Inital sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+        # find a good step size 
+        batch_gen = train_TFmodel.filled_batch(dream_seq.discrete_gen())
+        update_grads = iterate_op([next(batch_gen), 0])
+        step = 10/np.amax(update_grads)
+        # apply the updates
+        for i in range(num_iterations):
+            update_grads = iterate_op([next(batch_gen), 0])[0]
+            # we apply the update in log space so a zero update won't change anything
+            update = np.average(update_grads, axis=0)*dream_seq.seq*step
+            # we subtract away a bit of the sequence to force change only of important parts
+            dream_seq = np.log(dream_seq.seq) + update -.1*step
+            dream_seq = sequence.SeqDist(helper.softmax(dream_seq))
+            if i%(num_iterations//4) == 0 and viz:
+                print('Sequence after ' + str(i) + ' iterations')
+                viz_sequence.plot_icweights(dream_seq.seq)
+        if viz:
+            print('Final sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+        return dream_seq
+
+
+
+    def blocked_dream(self, seq, iterate_op=None, num_iterations=20, meme_library=None, viz=False):
+        """Dream a sequence for the given number of steps outside the pwm region.
+         
+        Arguments:
+            seq -- SeqDist object to iterate over.
+        Keywords:
+            iterate_op -- operation to get the gradient step, default is maximize output. 
+            num_iterations -- how many iterations to increment over.
+            meme_library -- list of memes to scan for
+            viz -- sequence logo of importance?
+        Returns:
+            dream_seq -- result of the iterations. 
+        """
+        # get an iterate operation
+        if iterate_op == None:
+            iterate_op = self.build_iterate()
+        # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
+        if np.count_nonzero(seq.seq) != np.size(seq.seq):
+            dream_seq = sequence.SeqDist(helper.softmax(3*seq.seq + 1))
+            print('Discrete sequenced passed for dreaming -- adding psedocount')
+        else:
+            dream_seq = sequence.SeqDist(seq.seq)
+        if viz:
+            print('Inital sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+        # find the meme position 
+        meme, position, _ = seq.find_pwm(meme_library=meme_library)
+        pwm_activation = seq.run_pwm(meme=meme, position=position)
+        # find a good step size
+        batch_gen = train_TFmodel.filled_batch(dream_seq.discrete_gen())
+        update_grads = iterate_op([next(batch_gen), 0])[0]
+        step = 10/np.amax(update_grads)
+        # apply the updates
+        for i in range(num_iterations):
+            update_grads = iterate_op([next(batch_gen), 0])[0]
+            # we apply the update in log space so a zero update won't change anything
+            update = np.average(update_grads, axis=0)*dream_seq.seq*step
+            update[position:position+meme.seq.shape[0]] = 0
+            dream_seq = np.log(dream_seq.seq) + update
+            dream_seq = sequence.SeqDist(helper.softmax(dream_seq))
+            if i%(num_iterations//4) == 0 and viz:
+                print('Sequence after ' + str(i) + ' iterations')
+                viz_sequence.plot_icweights(dream_seq.seq)
+        if viz:
+            print('Final sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+
         return dream_seq
 
     def constrained_dream(self, seq, iterate_op=None, num_iterations=20, viz=False):
@@ -152,13 +267,14 @@ class TFmodel(object):
         if iterate_op == None:
             iterate_op = self.build_iterate()
         # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
-        if np.count_nonzero(seq.seq) != np.size:
-            dream_seq = sequence.SeqDist(helper.softmax(2*seq.seq + 1))
+        if np.count_nonzero(seq.seq) != np.size(seq.seq):
+            dream_seq = sequence.SeqDist(helper.softmax(3*seq.seq + 1))
         else:
             dream_seq = sequence.SeqDist(seq.seq)
         if viz:
             print('Inital sequence')
             viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
         # find the meme position 
         meme, position, _ = seq.find_pwm()
         pwm_activation = seq.run_pwm(meme=meme, position=position)
@@ -173,16 +289,16 @@ class TFmodel(object):
             pwm_activation = seq.run_pwm(meme=meme, position=position)
             # we apply the update in log space so a zero update won't change anything
             update = helper.rejection(np.average(update_grads, axis=0)*dream_seq.seq, pwm_activation)*step
-            dream_seq = sequence.SeqDist(helper.softmax(np.log(dream_seq.seq + update)))
+            dream_seq = np.log(dream_seq.seq) + update
+            dream_seq = sequence.SeqDist(helper.softmax(dream_seq))
             if i%(num_iterations//4) == 0 and viz:
                 print('Sequence after ' + str(i) + ' iterations')
                 viz_sequence.plot_icweights(dream_seq.seq)
         if viz:
             print('Final sequence')
             viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
         return dream_seq
-
- 
 
     def build_iterate(self, layer_name='final_output', filter_index=0):
         """ Build a interation operation for use with dreaming method.

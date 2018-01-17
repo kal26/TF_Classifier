@@ -33,6 +33,11 @@ def filled_batch(iterable, batch_size=32, fillvalue=np.zeros((256, 4))):
     while True:
         yield np.asarray(next(groups))
 
+def random_seq():
+    """return a random Sequence."""
+    random = np.random.choice(np.fromstring('acgt', np.uint8), size=256)
+    return sequence.Sequence(random)
+
 class Bias(Layer):
 
     def __init__(self, units, activation=None, bias_initializer='zeros', **kwargs):
