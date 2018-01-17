@@ -417,3 +417,95 @@ class TFmodel(object):
             print('Information Content of Softmax prediction difference')
             viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
         return diffs, average_diffs, masked_diffs
+
+def predict_bed(data_path, model, genome, column_names=None):
+    """Predict from a bed file.
+    
+    Arguments:
+        data_path -- to the bed file.
+    Keywords:
+        genome -- default is hg19.
+        column_names -- default is chr start end
+    Outputs:
+        preds -- predictions for each row. 
+    """
+    peaks = pandas.read_table(data_path, header=None)
+    if column_names == None:
+        column_names = 'chr start end'
+    peaks.columns = column_names.split()
+
+    half_window = input_window // 2
+
+    def seq_gen():
+        done = False
+        first = True
+        batches = 0
+        sequences = 0
+        iterations = 0
+        while not done:
+                for index, row in peaks.iterrows():
+                    if first:
+                        pad_seq = np.zeros((1,256,4))
+                        if row.start < 0:
+                            row.start = 0
+                        seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
+                                                           dtype=np.uint8))
+                        if seq.shape != (256,4):
+                                print(row.start)
+                                print(row.end)
+                        pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
+                        batch = pad_seq
+                        first = False
+                    else:
+                        if np.asarray(batch).shape == (32, 256, 4):
+                            batches +=1
+                            yield np.asarray(batch)
+                            pad_seq = np.zeros((1,256,4))
+                            if row.start < 0:
+                                 row.start = 0
+                            seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
+                                                           dtype=np.uint8))
+                            if seq.shape != (256,4):
+                                print(row.start)
+                                print(row.end)
+                            pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
+                            batch = pad_seq
+                        elif len(batch) == 32:
+                            print('What in the what?!?')
+                            print(batch)
+                            print(batch.shape)
+                        else:                        
+                            pad_seq = np.zeros((1,256,4))
+                            if row.start < 0:
+                                row.start = 0
+                            seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
+                                                           dtype=np.uint8))
+                            if seq.shape != (256,4):
+                                print(row.start)
+                                print(row.end)
+                            pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
+                            batch = np.append(batch, pad_seq, axis=0)
+                    sequences += 1
+                    
+                print('Batches pulled: ' + str(batches))
+                final = np.zeros((batch_size, input_window, 4))
+                final[:batch.shape[0],:batch.shape[1]] = batch
+                print('Sequences pulled: ' + str(sequences))
+                print('Did final')
+                yield final
+                done = True
+            
+    g = seq_gen()
+    
+    preds=[]
+    
+    print('Expected batch count: ' + str((peaks.shape[0] // batch_size) + (peaks.shape[0] % batch_size > 0)))
+    
+    for i in range((peaks.shape[0] // batch_size) + (peaks.shape[0] % batch_size > 0)):
+        batch = next(g)
+        if batch.shape == (32, 256, 4):
+            preds.append(model.predict_on_batch(batch))
+        else:
+            print(batch.shape)
+
+    return preds
