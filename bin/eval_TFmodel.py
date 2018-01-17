@@ -1,11 +1,17 @@
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1' # Must be before importing keras!
 import tf_memory_limit
+#import general use packages
 import numpy as np
+import matplotlib.pyplot as plt
+#import keras related packages
+from keras import backend as K
+from keras.models import load_model, Model
+#import custom packages
+import helper
+import viz_sequence
 import train_TFmodel
 import sequence
-from keras import backend as K
-import helper
 
 class TFmodel(object):
     """Transcription factor classification keras model."""
@@ -14,20 +20,32 @@ class TFmodel(object):
         """Create a new model object.
 
         Arguments:
-            model_path -- path to a trained model with weights and arcitecture.
+            model_path -- path to a trained mode's directory with
+                          final_model.hdf5
+                          32.3_32.3_16.3_8.3_model.png
+                          history/
+                          intermediate_weights/
+                          atac_analysis/
+                          evaluation/
         Keywords:
-            output_path -- directory to write out requested files to. 
+            output_path -- directory to write out requested files to (defalut is to evaluation or atac analysis). 
         """
-        self.model = load_model(model_path, custom_objects={'Bias':Bias})
-        self.out_path = output_path
-        self.layer_dict = dict([(layer.name, layer) for layer in model.layers]) 
-        self.get_act = K.function([model.input, K.learning_phase()], [layer_dict['bias'].output])
+        self.model_path = model_path
+        self.model = load_model(os.path.join(model_path, 'final_model.hdf5'), custom_objects={'Bias':train_TFmodel.Bias})
+        if output_path != None:
+            self.out_path = output_path
+        else:
+            self.out_path = os.path.join(model_path, 'evaluation')
+        self.layer_dict = dict([(layer.name, layer) for layer in self.model.layers]) 
+        self.get_act = K.function([self.model.input, K.learning_phase()], [self.layer_dict['bias'].output])
 
     def __str__(self):
         """Printable version of the model."""
+        return 'TFmodel() at ' + self.model_path
     
     def __repr__(self):
         """Representaiton of the model."""
+        return 'TFmodel() at ' + self.model_path
 
     def get_activation(self, generator, distribution_repeats=32):
         """Return predctions for the given sequence or generator.
@@ -43,7 +61,6 @@ class TFmodel(object):
         #assume iterable
         try:
             test = next(generator)
-            count = 1
             if isinstance(test, sequence.SeqDist):
                 dist = True
                 #distribution
@@ -61,7 +78,6 @@ class TFmodel(object):
                 def stackgen():
                     yield test
                     for elem in generator:
-                        count = count + 1
                         yield elem
                 g = stackgen()
                 batch_gen = train_TFmodel.filled_batch(g)
@@ -74,40 +90,99 @@ class TFmodel(object):
                 ids = np.arange(len(activation))//distribution_repeats
                 outact = np.bincount(ids, activations)/np.bincount(ids) 
                 return outact
-            return activaton[:count]
+            return activation
         except TypeError:
             #acutally not iterable
-            return self.get_act([train_TFmodel.blank_batch(generator), 0])[0][0] 
+            return self.get_act([train_TFmodel.blank_batch(generator.seq), 0])[0][0] 
             
-    def dream(seq, iterate_op=None, num_iterations=20):
+    def dream(self, seq, iterate_op=None, num_iterations=20, viz=False):
         """Dream a sequence for the given number of steps.
          
         Arguments:
             seq -- SeqDist object to iterate over.
         Keywords:
             iterate_op -- operation to get the update step, default is maximize output. 
+            num_iterations -- how many iterations to increment over.
+            viz -- sequence logo of importance?
         Returns:
             dream_seq -- result of the iterations. 
         """
         # get an iterate operation
-        if iterate_op = None:
+        if iterate_op == None:
             iterate_op = self.build_iterate()
         # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
-        if np.count_nonzero(seq.dist) != np.size:
-            dream_seq = SeqDist(helper.softmax(seq.dist + .000001))
+        if np.count_nonzero(seq.seq) != np.size:
+            dream_seq = sequence.SeqDist(helper.softmax(2*seq.seq + 1))
         else:
-            dream_seq = SeqDist(seq.dist)
+            dream_seq = sequence.SeqDist(seq.seq)
+        if viz:
+            print('Inital sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
         # find a good step size 
-        update_grads = iterate_op([next(trainTF_model.filled_batch(dream_seq.discrete_gen())), 0])
-        step = 8/np.amax(update_grads)
+        batch_gen = train_TFmodel.filled_batch(dream_seq.discrete_gen())
+        update_grads = iterate_op([next(batch_gen), 0])
+        step = 10/np.amax(update_grads)
         # apply the updates
         for i in range(num_iterations):
-            batch_gen = trainTF_model.filled_batch(dream_seq.discrete_gen())
-            update_grads = iterate_op([next(batch_gen), 0])
+            update_grads = iterate_op([next(batch_gen), 0])[0]
             # we apply the update in log space so a zero update won't change anything
-            update = np.average(update_grads, axis=0)*dream_seq.dist*step
-            dream_seq = SeqDist(helper.softmax(np.log(dream_seq.dist + update))) 
+            update = np.average(update_grads, axis=0)*dream_seq.seq*step
+            dream_seq = sequence.SeqDist(helper.softmax(np.log(dream_seq.seq + update))) 
+            if i%(num_iterations//4) == 0 and viz:
+                print('Sequence after ' + str(i) + ' iterations')
+                viz_sequence.plot_icweights(dream_seq.seq)
+        if viz:
+            print('Final sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
         return dream_seq
+
+    def constrained_dream(self, seq, iterate_op=None, num_iterations=20, viz=False):
+        """Dream a sequence for the given number of steps constraining the pwm score.
+         
+        Arguments:
+            seq -- SeqDist object to iterate over.
+        Keywords:
+            iterate_op -- operation to get the gradient step, default is maximize output. 
+            num_iterations -- how many iterations to increment over.
+            viz -- sequence logo of importance?
+        Returns:
+            dream_seq -- result of the iterations. 
+        """
+        # get an iterate operation
+        if iterate_op == None:
+            iterate_op = self.build_iterate()
+        # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
+        if np.count_nonzero(seq.seq) != np.size:
+            dream_seq = sequence.SeqDist(helper.softmax(2*seq.seq + 1))
+        else:
+            dream_seq = sequence.SeqDist(seq.seq)
+        if viz:
+            print('Inital sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+        # find the meme position 
+        meme, position, _ = seq.find_pwm()
+        pwm_activation = seq.run_pwm(meme=meme, position=position)
+        # find a good step size
+        batch_gen = train_TFmodel.filled_batch(dream_seq.discrete_gen())
+        update_grads = iterate_op([next(batch_gen), 0])[0]
+        update = helper.rejection(np.average(update_grads, axis=0)*dream_seq.seq, pwm_activation)
+        step = 10/np.amax(update)
+        # apply the updates
+        for i in range(num_iterations):
+            update_grads = iterate_op([next(batch_gen), 0])[0]
+            pwm_activation = seq.run_pwm(meme=meme, position=position)
+            # we apply the update in log space so a zero update won't change anything
+            update = helper.rejection(np.average(update_grads, axis=0)*dream_seq.seq, pwm_activation)*step
+            dream_seq = sequence.SeqDist(helper.softmax(np.log(dream_seq.seq + update)))
+            if i%(num_iterations//4) == 0 and viz:
+                print('Sequence after ' + str(i) + ' iterations')
+                viz_sequence.plot_icweights(dream_seq.seq)
+        if viz:
+            print('Final sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+        return dream_seq
+
+ 
 
     def build_iterate(self, layer_name='final_output', filter_index=0):
         """ Build a interation operation for use with dreaming method.
@@ -136,7 +211,7 @@ class TFmodel(object):
             # grads /= (K.sqrt(K.mean(K.square(grads))) + 1e-5)
         # this function returns the loss and grads given the input picture
         iterate_op = K.function([encoded_seq, K.learning_phase()], [grads])
-        return iterate 
+        return iterate_op 
 
     def localize(row, genome):
         """ Find the section of a bed file row giving maximum acitvation.
@@ -177,5 +252,52 @@ class TFmodel(object):
         return Sequence(max_tile), max_pred
         
 
-
-
+    
+    def get_importance(self, seq, viz=False, start=None, end=None, plot=False):
+        """Generate the gradient based importance of a sequence according to a given model.
+        
+        Arguments:
+             seq -- the Sequence to run through the keras model.
+             viz -- sequence logo of importance?
+             start -- plot only past this nucleotide.
+             end -- plot only to this nucleotide.
+             plot -- generate a gain-loss plot?
+        Outputs:
+             diffs -- difference at each position to score.
+             average_diffs -- base by base importance value. 
+             masked_diffs -- importance for bases in origonal sequence.
+        """
+        score = self.get_activation(seq)
+        mutant_preds = self.get_activation(seq.ngram_mutant_gen())
+        #get the right shape
+        mutant_preds = mutant_preds.reshape((-1, 4))[:len(seq.seq)]
+        diffs = mutant_preds - score
+        # we want the difference for each nucleotide at a position minus the average difference at that position
+        average_diffs = list()
+        for base_seq, base_preds in zip(seq.seq, mutant_preds):
+            this_base = list()
+            for idx in range(4):
+                this_base.append(base_preds[idx] - np.average(base_preds))
+            average_diffs.append(list(this_base))
+        average_diffs = np.asarray(average_diffs)
+        # masked by the actual base
+        masked_diffs = (seq.seq * average_diffs)
+        if plot:
+            # plot the gain-loss curve 
+            plt.figure(figsize=(30,2.5))
+            plt.plot(np.amax(diffs, axis=1)[start:end])
+            plt.plot(np.amin(diffs, axis=1)[start:end])
+            plt.title('Prediciton Difference for a Mutagenisis Scan')
+            plt.ylabel('importance (difference)')
+            plt.xlabel('nucleotide')
+            plt.show()
+        if viz:
+            #print('Prediciton Difference')
+            #viz_sequence.plot_weights(average_diffs[start:end])
+            print('Masked average prediciton difference')
+            viz_sequence.plot_weights(masked_diffs[start:end])
+            #print('Information Content of Softmax average prediction difference')
+            #viz_sequence.plot_icweights(helper.softmax(average_diffs[start:end]))
+            print('Information Content of Softmax prediction difference')
+            viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
+        return diffs, average_diffs, masked_diffs

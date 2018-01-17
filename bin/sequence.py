@@ -173,60 +173,12 @@ class Sequence(object):
                 new_seq[i-motif.shape[0]//2:i-motif.shape[0]//2 + motif.shape[0]] = motif
                 yield new_seq
 
-    def importance(self, TFmodel, viz=False, start=None, end=None, plot=False):
-        """Generate the gradient based importance of a sequence according to a given model.
-        
-        Arguments:
-             TFmodel -- the keras model to run the seqeunce through.
-             viz -- sequence logo of importance?
-             start -- plot only past this nucleotide.
-             end -- plot only to this nucleotide.
-             plot -- generate a gain-loss plot?
-        Outputs:
-             diffs -- difference at each position to score.
-             average_diffs -- base by base importance value. 
-             masked_diffs -- importance for bases in origonal sequence.
-        """
-        score = TFmodel.get_activation(self)
-        mutant_preds = TFmodel.get_activations(self.ngram_mutant_gen())
-        #get the right shape
-        mutant_preds = mutant_preds.reshape((-1, 4))[:len(self.seq)]
-        diffs = mutant_preds - score
-        # we want the difference for each nucleotide at a position minus the average difference at that position
-        average_diffs = list()
-        for base_seq, base_preds in zip(self.seq, mutant_preds):
-            this_base = list()
-            for idx in range(4):
-                this_base.append(base_preds[idx] - np.average(base_preds))
-            average_diffs.append(list(this_base))
-        average_diffs = np.asarray(average_diffs)
-        # masked by the actual base
-        masked_diffs = (self.seq * average_diffs)
-        if plot:
-            # plot the gain-loss curve 
-            plt.figure(figsize=(30,2.5))
-            plt.plot(np.amax(diffs, axis=1)[start:end])
-            plt.plot(np.amin(diffs, axis=1)[start:end])
-            plt.title('Prediciton Difference for a Mutagenisis Scan')
-            plt.ylabel('importance (difference)')
-            plt.xlabel('nucleotide')
-            plt.show()
-        if viz:
-            print('Prediciton Difference')
-            viz_sequence.plot_weights(average_diffs[start:end])
-            print('Masked average prediciton difference')
-            viz_sequence.plot_weights(masked_diffs[start:end])
-            print('Information Content of Softmax average prediction difference')
-            viz_sequence.plot_icweights(helper.softmax(average_diffs[start:end]))
-            print('Information Content of Softmax prediction difference')
-            viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
-        return diffs, average_diffs, masked_diffs
-    
-    def find_pwm(self, meme_library=None):
+    def find_pwm(self, meme_library=None, viz=False):
         """ Convolute a meme with the sequence.
         
         Keywords:
              meme_library -- list of memes to use.
+             viz -- sequence logo of importance?
         Output:
              meme -- SeqDist() of the best matching meme.
              position -- start position of the hit.
@@ -236,34 +188,46 @@ class Sequence(object):
              meme_library = CTCF_memes
         # find the meme and location of the best match.
         score = -np.inf
-        position = None
-        meme = None
+        position = 0
+        meme = meme_library[0]
         for test_meme in meme_library:
             corr = correlate2d(self.seq, test_meme.pwm, mode='valid')
-            if np.max(corr) > score:
-                score = np.max(corr)
-                position = np.argmax(corr)
+            if np.nanmax(corr) > score:
+                score = np.nanmax(corr)
+                position = np.nanargmax(corr)
                 meme = test_meme
+        if viz:
+            print('Weighted log-odds of the Sequence Distribution')
+            insert = np.zeros(self.seq.shape)
+            insert[position:position+meme.pwm.shape[0]] = meme.pwm
+            overlap = insert * self.seq
+            viz_sequence.plot_weights(overlap)
         return meme, position, score
  
-    def run_pwm(self, meme=None, position=None):
+    def run_pwm(self, meme=None, position=None, viz=False):
         """Get the pwm correlation score with a sequence.
 
         Keywords:
             meme -- SeqDist() of the best matching meme, or library of memes to test.
             position -- start position of the hit.
+            viz -- sequence logo of importance?
         Outputs:
-            score -- correlation score.
+            overlap -- overlap which can be summed for the score.
         """
         if meme==None:
             # we need to find everything
-            return self.find_pwm()[2]
+            meme, position, score = self.find_pwm()
         elif position==None or isinstance(meme, list):
             # we have the meme/memelist
-            return self.find_pwm(meme_library=meme)[2]
-        else:
-            # just get the score
-            return correlate2d(self.seq[position:position+meme.shape[0]], meme.pwm, mode='valid')
+            meme, position, score = self.find_pwm(meme_library=meme)
+        # just get the score
+        insert = np.zeros(self.seq.shape)
+        insert[position:position+meme.pwm.shape[0]] = meme.pwm
+        overlap = insert * self.seq
+        if viz:
+            print('Weighted log-odds of the Sequence Distribution')
+            viz_sequence.plot_weights(overlap)
+        return overlap
 
 class SeqDist(Sequence):
     """A sequence, but as a probability distribution.
@@ -276,7 +240,7 @@ class SeqDist(Sequence):
         """Create a new sequence distribution object."""
         if isinstance(distribution, np.ndarray) and not (distribution.dtype == np.uint8):
             # right type!
-            self.seq = distribution 
+            self.seq = helper.softmax(np.log(distribution)) 
         else:
             raise TypeError('Sequence is not an accepted type')
  
@@ -291,12 +255,12 @@ class SeqDist(Sequence):
     def discrete_gen(self):
         """Create a generator of discrete sequences."""
         while True: 
-            yield self.disctrete_seq()
+            yield self.discrete_seq()
 
     def discrete_seq(self):
         """Return a discrete sequence samples from the continuous distribuiton."""
-        discrete = [np.random.choice(range(4), p=base) for base in self.seq]
-        return np.asarray(discrete)
+        discrete = [np.random.choice(one_hot_encoder, p=base) for base in self.seq]
+        return encode_to_onehot(np.asarray(discrete))
 
 class Meme(SeqDist):
     """A position weight matrix.
@@ -308,8 +272,13 @@ class Meme(SeqDist):
 
     def __init__(self, dist, pwm):
         """Create a new Meme object."""
-        self.seq = dist
+        self.seq = helper.softmax(np.log(dist))
         self.pwm = pwm
+
+    def __repr__(self):
+        """Information about the sequence."""
+        return 'Meme() length ' + str(self.shape[0])
+
     
 def process_meme(meme_path, transform=False):
     """Extract a meme distribution and process.
