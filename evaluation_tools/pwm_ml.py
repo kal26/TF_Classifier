@@ -48,4 +48,4 @@ model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accurac
 # train the network
 History = model.fit_generator(g, steps_per_epoch=num_batches, epochs=10, validation_data=g_val, validation_steps=100)
 
-model.save('/home/kal/TF_models/seq_only/pwm_model/final_output.hdf5')
+model.save('/home/kal/TF_models/seq_only/seq_classifier/pwm_model/final_model.hdf5')

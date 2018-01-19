@@ -298,12 +298,12 @@ class TFmodel(object):
             plt.xlabel('nucleotide')
             plt.show()
         if viz:
-            #print('Prediciton Difference')
-            #viz_sequence.plot_weights(average_diffs[start:end])
+            print('Prediciton Difference')
+            viz_sequence.plot_weights(average_diffs[start:end])
             print('Masked average prediciton difference')
             viz_sequence.plot_weights(masked_diffs[start:end])
-            #print('Information Content of Softmax average prediction difference')
-            #viz_sequence.plot_icweights(helper.softmax(average_diffs[start:end]))
+            print('Softmax prediction difference')
+            viz_sequence.plot_weights(helper.softmax(diffs[start:end]))
             print('Information Content of Softmax prediction difference')
             viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
         return diffs, average_diffs, masked_diffs
