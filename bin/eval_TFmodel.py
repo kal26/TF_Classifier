@@ -4,9 +4,11 @@ import tf_memory_limit
 #import general use packages
 import numpy as np
 import matplotlib.pyplot as plt
+import ucscgenome
 #import keras related packages
 from keras import backend as K
 from keras.models import load_model, Model, Input
+import tensorflow as tf
 #import custom packages
 import helper
 import viz_sequence
@@ -37,7 +39,11 @@ class TFmodel(object):
         else:
             self.out_path = os.path.join(model_path, 'evaluation')
         self.layer_dict = dict([(layer.name, layer) for layer in self.model.layers]) 
-        self.get_act = K.function([self.model.input, K.learning_phase()], [self.layer_dict['bias'].output])
+        try:
+            self.get_act = K.function([self.model.input, K.learning_phase()], [self.layer_dict['bias'].output])
+        except KeyError:
+            print('Loading model without Bias layer')
+            self.get_act = K.function([self.model.input, K.learning_phase()], [self.model.output])
 
     def __str__(self):
         """Printable version of the model."""
@@ -111,7 +117,7 @@ class TFmodel(object):
     def gumbel_dream(self, seq, temp=10, layer_name='final_output', filter_index=0, meme_library=None, num_iterations=20, step=None, viz=False):
         """ Dream a sequence for the given number of steps employing the gumbel-softmax reparamterization trick.
 
-      Arguments:
+        Arguments:
             seq -- SeqDist object to iterate over.
         Keywords:
             temp -- for gumbel softmax.
@@ -124,37 +130,46 @@ class TFmodel(object):
         Returns:
             dream_seq -- result of the iterations.
         """
+        # dreaming won't work off of true zero probabilities - if these exist we must add a pseudocount
+        if np.count_nonzero(seq.seq) != np.size(seq.seq):
+            print('Discrete Sequence passed - converting to a distibution via pseudocount')
+            dream_seq = sequence.SeqDist(helper.softmax(3*seq.seq + 1))
+        else:
+            dream_seq = sequence.SeqDist(seq.seq)
+
         # print the initial sequence
         if viz:
             print('Initial Sequence')
             viz_sequence.plot_icweights(seq.seq)
-
-        # get an gradient grabbing operation
-        distribution = Input(tensor=n)
-        sampled_seq = train_TFmodel.gumbel_softmax(distribution, temp, hard=True)
+        # get a gradient grabbing op
+        #input underlying distribution as (batch_size, 256, 4) duplications of the sequence
+        dist = Input(shape=((256,4)), name='distribution')
+        logits_dist = tf.reshape(dist, [-1,4])
+        # sample and reshape back (shape=(batch_size, 256, 4))
+        # set hard=True for ST Gumbel-Softmax
+        sampled_seq = tf.reshape(train_TFmodel.gumbel_softmax(logits_dist, temp, hard=True),[-1, 256, 4])
+        sampled_seq = self.model.input
         if layer_name == 'final_output':
-            activations = self.model.output
+            loss = self.model.output
         else:
             layer_output = self.layer_dict[layer_name].output
-        activations = layer_output[:, :, filter_index] #each batch and nuceotide at this neuron.
-        # forward and reverse sequences
-        combined_activation = K.mean(np.maximum(activations[:32], activations[32:]))
-        # compute the gradient of the input seq wrt this loss
-        grads = K.gradients(combined_activation, sampled_seq)[0]
-        # average to get the update (sampeling already weights for probability)
-        update = K.average(grads, axis=0)
-        # this function returns the loss and grads given the input picture
-        iterate_op = K.function([distribution, K.learning_phase()], [update])
+            activations = layer_output[:, :, filter_index] #each batch and nuceotide at this neuron.
+            # forward and reverse sequences
+            loss = K.mean(np.maximum(activations[:32], activations[32:]))
+        # compute the gradient of the input seq wrt this loss and average to get the update (sampeling already weights for probability)
+        update = K.mean(K.gradients(loss, sampled_seq)[0], axis=0)
+        #get a function
+        update_op = K.function([sampled_seq, K.learning_phase()], [update])
 
         #iterate and dream
-        dream_seq = sequence.SeqDist(seq.seq)
         for i in range(num_iterations):
-            update = iterate_op([dreami_seq.seq, 0])[0]
-            dream_seq.seq = dream_seq.seq + update
+            update = update_op([[dream_seq.seq]*32, 0])[0]
+            dream_seq.seq = helper.softmax(np.log(dream_seq.seq) + update)
             if i%(num_iterations//4) == 0 and viz:
                 print('Sequence after ' + str(i) + ' iterations')
                 viz_sequence.plot_icweights(dream_seq.seq)
-               #print the final sequence
+
+        #print the final sequence
         if viz:
             print('Final sequence')
             viz_sequence.plot_icweights(dream_seq.seq)
@@ -361,94 +376,27 @@ class TFmodel(object):
         return diffs, average_diffs, masked_diffs
 
 
-def predict_bed(data_path, model, genome, column_names=None):
-    """Predict from a bed file.
+    def predict_bed(self, data_path, genome, column_names=None):
+        """Predict from a bed file.
     
-    Arguments:
-        data_path -- to the bed file.
-    Keywords:
-        genome -- default is hg19.
-        column_names -- default is chr start end
-    Outputs:
-        preds -- predictions for each row. 
-    """
-    peaks = pandas.read_table(data_path, header=None)
-    if column_names == None:
-        column_names = 'chr start end'
-    peaks.columns = column_names.split()
-
-    half_window = input_window // 2
-
-    def seq_gen():
-        done = False
-        first = True
-        batches = 0
-        sequences = 0
-        iterations = 0
-        while not done:
-                for index, row in peaks.iterrows():
-                    if first:
-                        pad_seq = np.zeros((1,256,4))
-                        if row.start < 0:
-                            row.start = 0
-                        seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
-                                                           dtype=np.uint8))
-                        if seq.shape != (256,4):
-                                print(row.start)
-                                print(row.end)
-                        pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
-                        batch = pad_seq
-                        first = False
-                    else:
-                        if np.asarray(batch).shape == (32, 256, 4):
-                            batches +=1
-                            yield np.asarray(batch)
-                            pad_seq = np.zeros((1,256,4))
-                            if row.start < 0:
-                                 row.start = 0
-                            seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
-                                                           dtype=np.uint8))
-                            if seq.shape != (256,4):
-                                print(row.start)
-                                print(row.end)
-                            pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
-                            batch = pad_seq
-                        elif len(batch) == 32:
-                            print('What in the what?!?')
-                            print(batch)
-                            print(batch.shape)
-                        else:                        
-                            pad_seq = np.zeros((1,256,4))
-                            if row.start < 0:
-                                row.start = 0
-                            seq = ctcfgen.encode(np.fromstring(genome[row.chr][row.start:row.end].lower(), 
-                                                           dtype=np.uint8))
-                            if seq.shape != (256,4):
-                                print(row.start)
-                                print(row.end)
-                            pad_seq[0, :seq.shape[0], :seq.shape[1]] = seq
-                            batch = np.append(batch, pad_seq, axis=0)
-                    sequences += 1
-                    
-                print('Batches pulled: ' + str(batches))
-                final = np.zeros((batch_size, input_window, 4))
-                final[:batch.shape[0],:batch.shape[1]] = batch
-                print('Sequences pulled: ' + str(sequences))
-                print('Did final')
-                yield final
-                done = True
-            
-    g = seq_gen()
-    
-    preds=[]
-    
-    print('Expected batch count: ' + str((peaks.shape[0] // batch_size) + (peaks.shape[0] % batch_size > 0)))
-    
-    for i in range((peaks.shape[0] // batch_size) + (peaks.shape[0] % batch_size > 0)):
-        batch = next(g)
-        if batch.shape == (32, 256, 4):
-            preds.append(model.predict_on_batch(batch))
-        else:
-            print(batch.shape)
-
-    return preds
+        Arguments:
+            data_path -- to the bed file.
+        Keywords:
+             genome -- default is hg19.
+             column_names -- default is chr start end
+        Outputs:
+            preds -- predictions for each row. 
+        """
+        # get the genome and bed file regions
+        if genome == None:
+             genome = ucscgenome.Genome('/home/kal/.ucscgenome/hg19.2bit')
+         peaks = pandas.read_table(data_path, header=None)
+         if column_names == None:
+             column_names = 'chr start end'
+         peaks.columns = column_names.split()
+         # predict over the rows
+         preds = list()
+         for index, row in peaks.iterrows():
+             tile, pred = self.localize(row, genome)
+             preds.append(pred)
+         return preds

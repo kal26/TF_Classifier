@@ -51,7 +51,7 @@ def gumbel_softmax_sample(logits, temperature):
 def gumbel_softmax(logits, temperature, hard=False):
   """Sample from the Gumbel-Softmax distribution and optionally discretize.
   Args:
-    logits: [batch_size, n_class] unnormalized log-probs
+    logits: [sequence length, n_class] unnormalized log-probs
     temperature: non-negative scalar
     hard: if True, take argmax, but differentiate w.r.t. soft sample y
   Returns:

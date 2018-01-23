@@ -19,7 +19,7 @@ def rejection(seq_a, seq_b):
 def softmax(y):
     """Take softmax of the given sequence or batch at the lowest array level."""
     if y.ndim == 1:
-        return _softmax(y)
+        return _softmax(y + 1e-20)
     else:
         return np.asarray([softmax(small) for small in y])
 
