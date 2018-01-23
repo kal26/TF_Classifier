@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 #import keras related packages
 from keras import backend as K
-from keras.models import load_model, Model
+from keras.models import load_model, Model, Input
 #import custom packages
 import helper
 import viz_sequence
@@ -108,6 +108,60 @@ class TFmodel(object):
                 return np.sum(activation)/activation.shape[0]
             else:
                 return self.get_act([train_TFmodel.blank_batch(generator.seq), 0])[0][0][0] 
+    def gumbel_dream(self, seq, temp=10, layer_name='final_output', filter_index=0, meme_library=None, num_iterations=20, step=None, viz=False):
+        """ Dream a sequence for the given number of steps employing the gumbel-softmax reparamterization trick.
+
+      Arguments:
+            seq -- SeqDist object to iterate over.
+        Keywords:
+            temp -- for gumbel softmax.
+            layer_name -- name of the layer to optimize.
+            filter_index -- which of the neurons at this filter to optimize.
+            meme_library -- memes to use if applicable (default is CTCF)
+            num_iterations -- how many iterations to increment over.
+            step -- default is 1/10th the initial maximum gradient
+            viz -- sequence logo of importance?
+        Returns:
+            dream_seq -- result of the iterations.
+        """
+        # print the initial sequence
+        if viz:
+            print('Initial Sequence')
+            viz_sequence.plot_icweights(seq.seq)
+
+        # get an gradient grabbing operation
+        distribution = Input(tensor=n)
+        sampled_seq = train_TFmodel.gumbel_softmax(distribution, temp, hard=True)
+        if layer_name == 'final_output':
+            activations = self.model.output
+        else:
+            layer_output = self.layer_dict[layer_name].output
+        activations = layer_output[:, :, filter_index] #each batch and nuceotide at this neuron.
+        # forward and reverse sequences
+        combined_activation = K.mean(np.maximum(activations[:32], activations[32:]))
+        # compute the gradient of the input seq wrt this loss
+        grads = K.gradients(combined_activation, sampled_seq)[0]
+        # average to get the update (sampeling already weights for probability)
+        update = K.average(grads, axis=0)
+        # this function returns the loss and grads given the input picture
+        iterate_op = K.function([distribution, K.learning_phase()], [update])
+
+        #iterate and dream
+        dream_seq = sequence.SeqDist(seq.seq)
+        for i in range(num_iterations):
+            update = iterate_op([dreami_seq.seq, 0])[0]
+            dream_seq.seq = dream_seq.seq + update
+            if i%(num_iterations//4) == 0 and viz:
+                print('Sequence after ' + str(i) + ' iterations')
+                viz_sequence.plot_icweights(dream_seq.seq)
+               #print the final sequence
+        if viz:
+            print('Final sequence')
+            viz_sequence.plot_icweights(dream_seq.seq)
+            self.get_importance(dream_seq, viz=viz)
+        return dream_seq     
+
+
             
     def dream(self, seq, dream_type='standard', iterate_op=None, layer_name='final_output', filter_index=0, meme_library=None, num_iterations=20, step=None, viz=False):
         """Dream a sequence for the given number of steps.
@@ -257,8 +311,6 @@ class TFmodel(object):
         max_tile = tile_seq[np.argmax(preds)]
         return Sequence(max_tile), max_pred
         
-
-    
     def get_importance(self, seq, viz=False, start=None, end=None, plot=False):
         """Generate the gradient based importance of a sequence according to a given model.
         
@@ -307,6 +359,7 @@ class TFmodel(object):
             print('Information Content of Softmax prediction difference')
             viz_sequence.plot_icweights(helper.softmax(diffs[start:end]))
         return diffs, average_diffs, masked_diffs
+
 
 def predict_bed(data_path, model, genome, column_names=None):
     """Predict from a bed file.
