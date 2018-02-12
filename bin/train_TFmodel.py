@@ -27,7 +27,7 @@ def grouper(iterable, n, fillvalue=None):
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
 
-def filled_batch(iterable, batch_size=32, fillvalue=np.zeros((256, 4))):
+def filled_batch(iterable, batch_size=32, fillvalue=np.asarray([False]*256*4).reshape(256,4)):
     """Make batches of the given size until running out of elements, then buffer."""
     groups = grouper(iterable, batch_size, fillvalue=fillvalue)
     while True:
@@ -100,4 +100,79 @@ class Bias(Layer):
         config = {'units' : self.units, 'activation' : activations.serialize(self.activation), 'bias_initializer': initializers.serialize(self.bias_initializer)}
         base_config = super(Bias, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class BasicBlock(object):
+    """"Basic convolution block with dropout and weight decay."""
+    def __init__(self, filters, kernel_width=3, decay=0.9999, drop_rate=0.1, middle_drops=True):
+        """Initialize a convolution block.
+        
+        Arguments:
+            filters -- Number of neurons in the convolution.
+        Keywords:
+            kernal_width -- Width of convolutional window.
+            decay -- Decay of weights after each training update.
+            drop_rate -- Fraction of neurons to drop.
+            middle_drops -- Drop after intermediate layers.
+        """
+        super(BasicBlock, self).__init__()
+        self.conv = Conv1D(filters, kernel_width, padding='valid', activation='relu')#Add leaky relu?
+        # weight decay
+        self.conv.add_update([(w, K.in_train_phase(decay * w, w)) for w in self.conv.trainable_weights])
+
+        if drop_rate > 0 and middle_drops:
+            self.dropout = SpatialDropout1D(drop_rate)
+        else:
+            self.dropout = None
+
+    def __call__(self, x):
+        """Run the convolution"""
+        out = self.conv(x) #Add leaky relu?
+        if self.dropout != None:
+            out = self.dropout(out)
+        return out
+
+class BasicConv(object):
+    """Object for a series of convolutions."""
+    def __init__(self, num_inputs, conv_list, num_outputs=1, drop_rate=0.0, final_activation='relu', middle_drops=True, last_drop=False):
+        """Initialize a BasicConv object.
+     
+            Args:
+                num_inputs -- Number of excpected inputs. 
+                conv_list -- List of tuples of (num_hidden, kernel_size), one for each convlution in the net.
+            Keywords:
+                num_outputs -- Number of final outputs required.
+                drop_rate -- Percentage of features to drop on each level.
+                middle_drops -- Drop after intermediate layers.
+                last_drop -- Drop after final layer.
+        """
+        super(BasicConv, self).__init__()
+
+        self.drop_rate = drop_rate
+        self.middle_drops = middle_drops
+        self.last_drop = last_drop
+
+        blockgen = BasicBlock
+        print('Convolutions used: ' + str(conv_list) + ' [neurons, filter]')
+        self.conv_in = Conv1D(conv_list[0][0], conv_list[0][1], padding='valid', activation='relu', input_shape=(num_inputs, 4))
+
+        self.hidden_layers = []
+        for params in conv_list[1:]:
+            self.hidden_layers.append(blockgen(params[0], kernel_width=params[1], drop_rate=drop_rate))
+
+        self.conv_out = Conv1D(num_outputs, 1, padding='valid', activation=final_activation, name='final_conv')
+
+    def __call__(self, x):
+        x = self.conv_in(x)
+        self.hidden_outputs = []
+        self.hidden_outputs.append(x)
+        if self.drop_rate > 0 and self.middle_drops:
+            x = SpatialDropout1D(self.drop_rate)(x)
+        for h in self.hidden_layers:
+            x = h(x)
+            self.hidden_outputs.append(x)
+        x = self.conv_out(x)
+        if self.drop_rate > 0 and self.last_drop:
+            x = SpatialDropout1D(self.drop_rate)(x)
+        return x
 
