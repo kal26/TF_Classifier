@@ -502,6 +502,8 @@ def snv_gen(peaks, genome, alt=False):
                 seq[128-offset] = sequence.encode_to_onehot(row.altAllele.lower())
             else:
                 seq[128-offset] = sequence.encode_to_onehot(row.refAllele.lower())
+        if (row.refAllele).lower() != (genome[row.chr][row.position]).lower():
+             raise IndexError('Reference allele does not match reference genome')
         if seq.shape == (256, 4):
             yield seq
         else:
