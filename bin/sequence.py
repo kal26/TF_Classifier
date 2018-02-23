@@ -117,7 +117,7 @@ class Sequence(object):
             for idx in range(len(self.seq)):
                 if n//2 <= idx <= len(self.seq) - n//2 - 1:
                     first = idx-n//2
-                    last = idx+n//2+1
+                    last = idx+(n+1)//2 
                     #standard case
                     ngrams = product(one_hot_encoder, repeat=n)
                     for gram in ngrams:
@@ -337,19 +337,16 @@ def process_meme(meme_path, transform=False):
         for meme in meme_lods:
             rcs.append(meme[::-1, ::-1])
         meme_lods = meme_lods + rcs
-    #transofrm the memes
-   # if transform:
-   #     psuedocount=0.05
-   #     transformed_memes = list()
-   #     for meme in memes:
-   #         meme = meme + psuedocount
-   #         norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
-   #         meme = np.log(meme/norms)
-   #         min = np.amin(meme)
-   #         meme = meme - min
-   #         transformed_memes.append(meme)
-   # else:
-   #     transformed_memes = memes
+        if len(meme_lods) == 0:
+            #transofrm the memes
+            psuedocount=0.05
+            for meme in meme_dists:
+                meme = meme + psuedocount
+                norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
+                meme = np.log(meme/norms)
+                min = np.amin(meme)
+                meme = meme - min
+                meme_lods.append(meme)
     #make distribution objects
     meme_list = [Meme(distribution, log_odds) for distribution, log_odds in zip(meme_dists, meme_lods)]
     return meme_list
