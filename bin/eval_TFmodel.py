@@ -438,6 +438,77 @@ class TFmodel(object):
             preds.append(pred)
         return np.asarray(preds).flatten()
 
+    def predict_snv(self, peaks, genome=None):
+        """Predict from a bed file with chr, position, refAllele, altAllele.
+
+        Arguments:
+            peaks -- the bed file in pd table form.
+        Keywords:
+            genome -- default is hg19.
+        Outputs:
+            refpreds -- predictions for each row with reference allele. 
+            altpreds -- predictions for each row with alternate allele. 
+        """
+        # get the genome and bed file regions
+        if genome == None:
+             genome = ucscgenome.Genome('/home/kal/.ucscgenome/hg19.2bit')
+        # predict over the rows
+        refpreds = list()
+        batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=False))
+        for batch in batchgen:
+            refpreds.append(self.model.predict_on_batch(batch))
+        refpreds = np.asarray(refpreds).flatten()[:len(peaks)]
+    
+        altpreds = list()
+        batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=True))
+        for batch in batchgen:
+            altpreds.append(self.model.predict_on_batch(batch))
+        altpreds = np.asarray(altpreds).flatten()[:len(peaks)]
+   
+        return refpreds, altpreds
+
+def snv_gen(peaks, genome, alt=False):
+    """Generate sequnces from snv data.
+    
+    Arguments:
+        peaks -- from a bed file.
+        genome -- to pull bed from.
+    Keywords:
+        alt -- give alternate allele version.
+    Returns:
+        seq -- sequence with the alternate or refernce allele, centered around the position. """
+    for index, row in peaks.iterrows():
+        if row.position > 128:
+            seq = sequence.encode_to_onehot(genome[row.chr][row.position-128:row.position+128])
+            if alt:
+                seq[128] = sequence.encode_to_onehot(row.altAllele.lower())
+            else:
+                seq[128] = sequence.encode_to_onehot(row.refAllele.lower())
+        else:
+            # sequence too close to begining
+            seq = sequence.encode_to_onehot(genome[row.chr][0:256])
+            if alt:
+                seq[row.position] = sequence.encode_to_onehot(row.altAllele.lower())
+            else:
+                seq[row.position] = sequence.encode_to_onehot(row.refAllele.lower())
+        if seq.shape != (256, 4):
+            # seq too close to end?
+            print('Sequence at ' +str(row.chr) + ' ' + str(row.position) + ' is too short!')
+            offset = 0
+            while seq.shape != (256, 4) and offset < 128:
+                offset += 1
+                seq = sequence.encode_to_onehot(genome[row.chr][row.position-128-offset:row.position+128-offset])
+            if alt:
+                seq[128-offset] = sequence.encode_to_onehot(row.altAllele.lower())
+            else:
+                seq[128-offset] = sequence.encode_to_onehot(row.refAllele.lower())
+        if (row.refAllele).lower() != (genome[row.chr][row.position]).lower():
+             raise IndexError('Reference allele does not match reference genome')
+        if seq.shape == (256, 4):
+            yield seq
+        else:
+            print('Sequence at ' +str(row.chr) + ' ' + str(row.position) + ' couldn\'t be fixed')
+
 
 def group_stats(key, h1, h2, h3):
     # Summarize history for accuracy

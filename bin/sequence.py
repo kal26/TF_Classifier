@@ -280,7 +280,7 @@ class Meme(SeqDist):
         return 'Meme() length ' + str(self.seq.shape[0])
 
     
-def process_meme(meme_path, transform=False):
+def process_meme(meme_path, transform=False, verb=False):
     """Extract a meme distribution and process.
    
     Arguments:
@@ -298,6 +298,8 @@ def process_meme(meme_path, transform=False):
         for line in infile.readlines():
             if 'letter-probability matrix' in line:
                 meme_length = int(line.split()[5])
+                if verb:
+                    print('found meme')
                 this_meme_lines = list()
             elif meme_length > 0:
                 this_meme_lines.append([float(item.strip()) for item in line.split()])
@@ -339,13 +341,14 @@ def process_meme(meme_path, transform=False):
         meme_lods = meme_lods + rcs
         if len(meme_lods) == 0:
             #transofrm the memes
-            psuedocount=0.05
+            if verb:
+                print('using manual log-odds calculation')
+            psuedocount=0.005
             for meme in meme_dists:
-                meme = meme + psuedocount
-                norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
-                meme = np.log(meme/norms)
-                min = np.amin(meme)
-                meme = meme - min
+                # add the pseudocount so probabilities don't zero out
+                meme = meme*(.98) + psuedocount
+                #norms = np.repeat(np.linalg.norm(meme, axis=1), 4).reshape((-1, 4))
+                meme = np.log(meme) - np.log(.25)
                 meme_lods.append(meme)
     #make distribution objects
     meme_list = [Meme(distribution, log_odds) for distribution, log_odds in zip(meme_dists, meme_lods)]

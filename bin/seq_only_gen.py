@@ -23,8 +23,17 @@ import viz_sequence
 import train_TFmodel
 import sequence
 
-def create_from_bed(bed_path, out_path, columns=None, TF='CTCF'):
-    """Create an hdf5 file from a bed file."""
+def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0):
+    """Create an hdf5 file from a bed file.
+    Arguments:
+        bed_path -- path to a bed file of sample peaks.
+        out_path -- path where the hdf5 should be written.
+      
+    Keywords:
+        columns -- pass labels for the bed file unless the defaults can be used.
+        TF -- the transcription factor to filter for.
+        example_limit -- the minimum number of examples to bother with.
+    """
     # read TF peaks
     full = pd.read_table(bed_path, header=None)
     if columns == None:
@@ -41,6 +50,8 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF'):
     negative_shift = prediction_window * 4
     num_training_examples = sum(peaks.chr != 'chr8')
     print('Number of training examples: ' + str(num_training_examples))
+    if num_training_examples < example_limit:
+        raise IndexError('Only ' + str(num_training_examples) + ' training samples')
     # build intervaltrees for peaks to make sure our negatives (shifted positives)
     # are true negatives
     print('Building itrtree')
