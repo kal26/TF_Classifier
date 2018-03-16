@@ -23,7 +23,7 @@ import viz_sequence
 import train_TFmodel
 import sequence
 
-def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0):
+def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0, scrambled=1):
     """Create an hdf5 file from a bed file.
     Arguments:
         bed_path -- path to a bed file of sample peaks.
@@ -33,6 +33,7 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
         columns -- pass labels for the bed file unless the defaults can be used.
         TF -- the transcription factor to filter for.
         example_limit -- the minimum number of examples to bother with.
+        scrambled -- the size of the -mers to consider independent units when scrambeling.
     """
     # read TF peaks
     full = pd.read_table(bed_path, header=None)
@@ -105,8 +106,15 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
 
     def neg_gen_scrambled(mode='train'):
         posgen = pos_gen(mode=mode)
+        if prediction_window // scrambled != 0:
+            print(scrambled + 'mers do not evenly divide the sequence.')
+            scrambled = 1
         for p in posgen:
-            yield ''.join(random.sample(p,len(p)))
+            p = np.asarray([base for base in p])
+            p = p.reshape((-1,scrambled))
+            np.random.shuffle(p)
+            p = p.reshape([-1])
+            yield p
 
     def neg_gen(mode='train'):
         for n1, n2 in zip_longest(neg_gen_shifted(mode=mode), neg_gen_scrambled(mode=mode)):
