@@ -31,18 +31,18 @@ tf.app.flags.DEFINE_string('out_dir', '/home/kal/TF_models/seq_only/seq_classifi
 tf.app.flags.DEFINE_string('conv_list', '32.3_32.32_16.3_8.3', 'List of convolution params - (num_hidden, kernel_size)')
 tf.app.flags.DEFINE_string('gen_path', '/home/kal/TF_models/seq_only/ctcfgen.hdf5', 'Path to the hdf5 generator object.')
 
-def main(argv=None):
+def make_model(out_path, conv_string, gen_path):
     """Construct and train a convolutional transcription factor prediciton network."""
     #Define some params
     input_window = 256
     batch_size = 32
     num_epochs = 15
     drop_rate = 0.1
-    conv_list = [[int(x) for x in cell.split('.')] for cell in FLAGS.conv_list.split('_')]
+    conv_list = [[int(x) for x in cell.split('.')] for cell in conv_string.split('_')]
     # Get the time-tag for the model.
     timestr = time.strftime("%Y%m%d_%H%M%S")
     # make a file system
-    out_path = os.path.join(FLAGS.out_dir, timestr + '_convnet')
+    out_path = os.path.join(out_path, timestr + '_convnet')
     os.makedirs(out_path)
     weights_path = os.path.join(out_path, 'intermediate_weights')
     os.makedirs(weights_path)
@@ -70,7 +70,7 @@ def main(argv=None):
     predictions = linearize(final_bias(max_by_direction(wide_scan(per_base_score(add_RC_to_batch(input))))))
     model = Model(inputs=[input], outputs=[predictions])
     # save a graph of the model configuration
-    plot_model(model, to_file=os.path.join(out_path, timestr + '_' + FLAGS.conv_list + '_model.png'), show_shapes=True)
+    plot_model(model, to_file=os.path.join(out_path, timestr + '_' + conv_string+ '_model.png'), show_shapes=True)
 
     # create optimizers for the three learning phases with learning rate 1/10th of previous at each step
     #optimizer_1 = Adam(beta_1=0.95, lr=0.0005)
@@ -79,14 +79,13 @@ def main(argv=None):
     optimizer_3 = Adam(beta_1=0.95, lr=0.000005, epsilon=.00001)
 
     # create a data generator
-    gen_path = FLAGS.gen_path
     TFgen = seq_only_gen.TFGenerator(gen_path)
     traingen = TFgen.pair_gen(mode='train')
     valgen = TFgen.pair_gen(mode='val')
 
     # Create a callback to save the model weights.
     checkpath = os.path.join(weights_path, '_'.join([timestr, 'weights_1_{epoch:02d}_{val_acc:.2f}.hdf5']))
-    checkpointer = ModelCheckpoint(checkpath, verbose=1, monitor='val_acc', mode='max')
+    checkpointer = ModelCheckpoint(checkpath, verbose=0, monitor='val_acc', mode='max')
     callbacks_list = [checkpointer]
     
     #train the model
@@ -95,19 +94,19 @@ def main(argv=None):
     num_batches = TFgen.get_num_training_examples() // batch_size
     # compile and run the first iteration of the training params and model
     model.compile(loss='binary_crossentropy', optimizer=optimizer_1, metrics=['accuracy'])
-    History_1 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list)
+    History_1 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list, verbose=0)
     # compile and train the second iteration
     checkpath = os.path.join(weights_path, '_'.join([timestr, 'weights_2_{epoch:02d}_{val_acc:.2f}.hdf5']))
-    checkpointer = ModelCheckpoint(checkpath, verbose=1, monitor='val_acc', mode='max')
+    checkpointer = ModelCheckpoint(checkpath, verbose=0, monitor='val_acc', mode='max')
     callbacks_list = [checkpointer]
     model.compile(loss='binary_crossentropy', optimizer=optimizer_2, metrics=['accuracy'])
-    History_2 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list)
+    History_2 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list, verbose=0)
     # compile and train the third iteration
     checkpath = os.path.join(weights_path, '_'.join([timestr, 'weights_3_{epoch:02d}_{val_acc:.2f}.hdf5']))
-    checkpointer = ModelCheckpoint(checkpath, verbose=1, monitor='val_acc', mode='max')
+    checkpointer = ModelCheckpoint(checkpath, verbose=0, monitor='val_acc', mode='max')
     callbacks_list = [checkpointer]
     model.compile(loss='binary_crossentropy', optimizer=optimizer_3, metrics=['accuracy'])
-    History_3 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list)
+    History_3 = model.fit_generator(traingen, num_batches // 50, epochs=num_epochs*50 // 3, validation_data=valgen, validation_steps=50, callbacks=callbacks_list, verbose=0)
 
     # Write out the loss and accuracy histories
     with open(os.path.join(history_path, timestr +'_history1.pk1'), 'wb') as output:
@@ -120,6 +119,14 @@ def main(argv=None):
 
     # save the final model
     model.save(os.path.join(out_path, 'final_model.hdf5'))
+
+def main(argv=None):
+    # Get the time-tag for the model.
+    timestr = time.strftime("%Y%m%d_%H%M%S")
+    # make a file system
+    out_path = os.path.join(FLAGS.out_dir, timestr + '_convnet')
+    os.makedirs(out_path)
+    make_model(out_path, FLAGS.conv_list, FLAGS.gen_path)
 
 
 if __name__ == '__main__':

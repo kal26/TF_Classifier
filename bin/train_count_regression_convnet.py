@@ -26,12 +26,8 @@ import train_TFmodel
 import sequence
 import seq_only_gen
 
-FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_string('out_dir', '/home/kal/TF_models/seq_only/seq_regression', 'Location to write output files.')
-tf.app.flags.DEFINE_string('conv_list', '32.3_32.32_16.3_8.3', 'List of convolution params - (num_hidden, kernel_size)')
-tf.app.flags.DEFINE_string('gen_path', '/home/kal/TF_models/seq_only/ctcfgen.hdf5', 'Path to the hdf5 generator object.')
 
-def make_model(out_path, conv_string, gen_path, loss_func='mean_squared_error', fine_grain=True, num_epochs=1, verb=0):
+def make_model(out_path, conv_string, gen, fine_grain=True, num_epochs=10, verb=0):
     """Construct and train a convolutional transcription factor prediciton network."""
     #Define some params
     input_window = 256
@@ -45,6 +41,9 @@ def make_model(out_path, conv_string, gen_path, loss_func='mean_squared_error', 
     os.makedirs(weights_path)
     history_path = os.path.join(out_path, 'history')
     os.makedirs(history_path)
+
+    # get a data generator
+    
     
     # define the model construction
     # A one how input with reverse complement -- > series of convolutions --> smoothing --> maximum over directions --> bias --> activation
@@ -71,17 +70,6 @@ def make_model(out_path, conv_string, gen_path, loss_func='mean_squared_error', 
     #optimizer_1 = Adam(beta_1=0.95, lr=0.0005)
     optimizer_1 = Adam(beta_1=0.95, lr=0.0005, epsilon=.1)
     optimizer_2 = Adam(beta_1=0.95, lr=0.00005, epsilon=.001)
-    optimizer_3 = Adam(beta_1=0.95, lr=0.000005, epsilon=.00001)
-
-    # create a data generator
-    TFgen = seq_only_gen.TFGenerator(gen_path)
-    traingen = TFgen.pair_gen(mode='train', strengths=True)
-    valgen = TFgen.pair_gen(mode='val', strengths=True)
-
-    # Create a callback to save the model weights.
-    checkpath = os.path.join(weights_path, '_'.join([timestr, 'weights_1_{epoch:02d}_{val_loss:.2f}.hdf5']))
-    checkpointer = ModelCheckpoint(checkpath, verbose=verb, monitor='val_loss', mode='min')
-    callbacks_list = [checkpointer]
     
     #train the model
     num_batches = TFgen.get_num_training_examples() // batch_size
@@ -145,3 +133,14 @@ if __name__ == '__main__':
 import gc; gc.collect()
 
 
+#!/bin/python
+import os
+import sys
+sys.path.append('/home/kal/TF_models/bin/')
+#!/bin/python
+import os
+import sys
+#!/bin/python
+import os
+import sys
+sys.path.append('/home/kal/TF_models/bin/')

@@ -23,7 +23,7 @@ import viz_sequence
 import train_TFmodel
 import sequence
 
-def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0):
+def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0, scrambled=1, shifts=True, score_columns='score'.split()):
     """Create an hdf5 file from a bed file.
     Arguments:
         bed_path -- path to a bed file of sample peaks.
@@ -33,6 +33,9 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
         columns -- pass labels for the bed file unless the defaults can be used.
         TF -- the transcription factor to filter for.
         example_limit -- the minimum number of examples to bother with.
+        scrambled -- the size of the -mers to consider independent units when scrambeling.
+        shift -- use shifted samples?
+        score_columns -- which columns to put as the score
     """
     # read TF peaks
     full = pd.read_table(bed_path, header=None)
@@ -47,19 +50,21 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
     # for testing - hold out chr8
     prediction_window = 256
     half_window = prediction_window // 2
-    negative_shift = prediction_window * 4
     num_training_examples = sum(peaks.chr != 'chr8')
-    print('Number of training examples: ' + str(num_training_examples))
     if num_training_examples < example_limit:
         raise IndexError('Only ' + str(num_training_examples) + ' training samples')
-    # build intervaltrees for peaks to make sure our negatives (shifted positives)
-    # are true negatives
-    print('Building itrtree')
-    peak_intervals = {chr: IntervalTree() for chr in peaks.chr.unique()}
-    for chr in peaks.chr.unique():
-        peak_intervals[chr][len(genome[chr]):len(genome[chr])+1] = 1
-    for idx, row in tqdm(peaks.iterrows()):
-        peak_intervals[row.chr][(row.start - half_window):(row.end + half_window)] = 1
+    print('Number of training examples: ' + str(num_training_examples))
+
+    if shifts:
+        negative_shift = prediction_window * 4
+        # build intervaltrees for peaks to make sure our negatives (shifted positives)
+        # are true negatives
+        print('Building itrtree')
+        peak_intervals = {chr: IntervalTree() for chr in peaks.chr.unique()}
+        for chr in peaks.chr.unique():
+            peak_intervals[chr][len(genome[chr]):len(genome[chr])+1] = 1
+        for idx, row in tqdm(peaks.iterrows()):
+            peak_intervals[row.chr][(row.start - half_window):(row.end + half_window)] = 1
 
     def pos_gen(mode='train'):
         if mode == 'test':
@@ -86,7 +91,13 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
             indices = np.nonzero(peaks.chr != 'chr8')[0]
         for idx in indices:
             row = peaks.iloc[idx]
-            yield row.score
+            if len(score_columns) == 1:
+                yield row[score_columns]
+            else:
+                scores=list()
+                for c in score_columns:
+                    scores.append(c)
+                yield scores
 
     def neg_gen_shifted(mode='train'):
         if mode == 'test':
@@ -103,23 +114,35 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
                 if len(peak_intervals[row.chr][(center - half_window):(center + half_window)]) == 0:
                     yield genome[row.chr][(center - half_window):(center + half_window)].lower()
 
-    def neg_gen_scrambled(mode='train'):
+    def neg_gen_scrambled(scrambled, mode='train'):
         posgen = pos_gen(mode=mode)
+        if prediction_window % scrambled != 0:
+            print(str(scrambled) + 'mers do not evenly divide the sequence.')
+            scrambled = 1
         for p in posgen:
-            yield ''.join(random.sample(p,len(p)))
+            p = np.asarray([base for base in p])
+            p = p.reshape((-1,scrambled))
+            np.random.shuffle(p)
+            p = p.reshape([-1])
+            yield ''.join(p)
 
-    def neg_gen(mode='train'):
-        for n1, n2 in zip_longest(neg_gen_shifted(mode=mode), neg_gen_scrambled(mode=mode)):
-            if n1 != None:
-                yield n1
-            if n2 != None:
-                yield n2
+    def neg_gen(scrambled=1, mode='train'):
+        if shifts:
+            for n1, n2 in zip_longest(neg_gen_shifted(mode=mode), neg_gen_scrambled(scrambled, mode=mode)):
+                if n1 != None:
+                    yield n1
+                if n2 != None:
+                   yield n2
+        else:
+            for n in neg_gen_scrambled(scrambled, mode=mode):
+                    yield n
 
     # Write out a file for the data.
     dt = "S" + str(256)
     print('Writing hdf5 File')
     hf5 = h5py.File(out_path, 'w')
-    hf5.create_dataset('train_pos_str', data=np.fromiter(pos_gen_strength(mode='train'), np.uint32, count=-1), chunks=True)
+    data=[g for g in pos_gen_strength(mode='train')]
+    hf5.create_dataset('train_pos_str', data=data, chunks=True)
     hf5.create_dataset('train_pos', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(pos_gen(mode='train'), dt, count=-1)], chunks=True)
     print('Finished positive training')
     hf5.create_dataset('test_pos_str', data=np.fromiter(pos_gen_strength(mode='test'), np.uint32, count=-1), chunks=True)
@@ -128,11 +151,11 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
     hf5.create_dataset('val_pos_str', data=np.fromiter(pos_gen_strength(mode='val'), np.uint32, count=-1), chunks=True)
     hf5.create_dataset('val_pos', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(pos_gen(mode='val'), dt, count=-1)], chunks=True)
     print('Finished positive validation')
-    hf5.create_dataset('train_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(mode='train'), dt, count=-1)], chunks=True)
+    hf5.create_dataset('train_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(scrambled=scrambled, mode='train'), dt, count=-1)], chunks=True)
     print('Finished negative training')
-    hf5.create_dataset('test_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(mode='test'), dt, count=-1)], chunks=True)
+    hf5.create_dataset('test_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(scrambled=scrambled, mode='test'), dt, count=-1)], chunks=True)
     print('Finished negative testing')
-    hf5.create_dataset('val_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(mode='val'), dt, count=-1)], chunks=True)
+    hf5.create_dataset('val_neg', data=[np.fromstring(seq, np.uint8) for seq in np.fromiter(neg_gen(scrambled=scrambled, mode='val'), dt, count=-1)], chunks=True)
     print('Finished negative validation')
     hf5.close()
     print('Wrote to file')
@@ -151,6 +174,7 @@ class TFGenerator(object):
         self.test_neg = self.hf5['test_neg']
         self.val_neg = self.hf5['val_neg']
         self.num_training_examples = self.train_pos.shape[0]
+#        self.output_shape = len(self.hf5['test_pos_str'][0])
         
     def pos_gen(self, mode='train', once=False):
         """Generate a positive seqeunce sample."""
@@ -212,7 +236,8 @@ class TFGenerator(object):
                 if strengths:
                     scores.append(score)
             if strengths:
-                labels = np.append(scores, np.zeros(32 // 2))
+               # labels = np.append(scores, np.zeros(32 // 2, self.score_shape))
+                 labels = np.append(scores, np.zeros(32 // 2))
             yield np.asarray(pos_seqs + neg_seqs), labels
 
     def get_num_training_examples(self):

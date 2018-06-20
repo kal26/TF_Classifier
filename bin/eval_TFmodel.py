@@ -122,15 +122,14 @@ class TFmodel(object):
                 return np.sum(activation)/activation.shape[0]
             else:
                 return self.get_act([train_TFmodel.blank_batch(generator.seq), 0])[0][0][0] 
-    def gumbel_dream(self, seq, dream_type, temp=10, layer_name='final_output', filter_index=0, meme_library=None, num_iterations=20, step=None, viz=False):
+    def gumbel_dream(self, seq, dream_type, temp=10, layer_name='final_output', filter_index=0, meme_library=None, num_iterations=20, step=None, constraint=None, viz=False):
         """ Dream a sequence for the given number of steps employing the gumbel-softmax reparamterization trick.
 
         Arguments:
             seq -- SeqDist object to iterate over.
             dream_type -- type of dreaming to do. 
                 standard: update is average gradient * step
-                adverse: update is standard - .05
-                blocked: dream only outside the pwm region (should I allow the max pwm to move around? doesn't currently.)
+                constrained: dream the rejection of this model against the other model.
         Keywords:
             temp -- for gumbel softmax.
             layer_name -- name of the layer to optimize.
@@ -138,6 +137,7 @@ class TFmodel(object):
             meme_library -- memes to use if applicable (default is CTCF)
             num_iterations -- how many iterations to increment over.
             step -- default is 1/10th the initial maximum gradient
+            constraint -- for constrained dreaming, the model to use for rejection.
             viz -- sequence logo of importance?
         Returns:
             dream_seq -- result of the iterations.
@@ -151,7 +151,7 @@ class TFmodel(object):
 
         # get a gradient grabbing op
         #input underlying distribution as (batch_size, 256, 4) duplications of the sequence
-        dist = Input(shape=((256,4)), name='distribution')
+        dist = tf.placeholder(shape=((256,4)), name='distribution', dtype=tf.float32)
         logits_dist = tf.reshape(dist, [-1,4])
         # sample and reshape back (shape=(batch_size, 256, 4))
         # set hard=True for ST Gumbel-Softmax
@@ -164,7 +164,14 @@ class TFmodel(object):
             layer_output = max_by_direction(self.layer_dict[layer_name].output)
             loss = layer_output[:, filter_index] #each batch and nuceotide at this neuron.
         # compute the gradient of the input seq wrt this loss and average to get the update (sampeling already weights for probability)
-        update = K.mean(K.gradients(loss, sampled_seq)[0], axis=0)
+        if dream_type == 'constrained':
+             sampled_seq = constraint.model.input
+             pwm_loss = constraint.output
+             grads = K.gradients(loss, sampled_seq)[0]
+             pwms = K.gradients(pwm_loss, sampled_seq)[0] 
+             update = K.mean(helper.rejection(grads, pwms), axis=0)
+        else:
+            update = K.mean(K.gradients(loss, sampled_seq)[0], axis=0)
         #get a function
         update_op = K.function([sampled_seq, K.learning_phase()], [update])
 
@@ -367,7 +374,7 @@ class TFmodel(object):
             print(preds)
         return sequence.Sequence(max_tile), max_pred
         
-    def get_importance(self, seq, viz=False, start=None, end=None, plot=False, temp=.15):
+    def get_importance(self, seq, viz=False, start=None, end=None, plot=False, temp=.1):
         """Generate the gradient based importance of a sequence according to a given model.
         
         Arguments:
@@ -438,7 +445,7 @@ class TFmodel(object):
             preds.append(pred)
         return np.asarray(preds).flatten()
 
-    def predict_snv(self, peaks, genome=None):
+    def predict_snv(self, peaks, genome=None, act=False):
         """Predict from a bed file with chr, position, refAllele, altAllele.
 
         Arguments:
@@ -456,13 +463,19 @@ class TFmodel(object):
         refpreds = list()
         batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=False))
         for batch in batchgen:
-            refpreds.append(self.model.predict_on_batch(batch))
+            if act:
+                refpreds.append(self.get_act([batch, 0]))
+            else:
+                refpreds.append(self.model.predict_on_batch(batch))
         refpreds = np.asarray(refpreds).flatten()[:len(peaks)]
     
         altpreds = list()
         batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=True))
         for batch in batchgen:
-            altpreds.append(self.model.predict_on_batch(batch))
+            if act:
+                altpreds.append(self.get_act([batch, 0]))
+            else:
+                altpreds.append(self.model.predict_on_batch(batch))
         altpreds = np.asarray(altpreds).flatten()[:len(peaks)]
    
         return refpreds, altpreds

@@ -27,7 +27,7 @@ def encode_to_string(seq):
 def encode_to_uint8(seq):
     "return a uint8 from string, uint8, or onehot"
     if isinstance(seq, str):
-        return np.fromstring(seq, dtype=np.uint8)
+        return np.fromstring(seq.lower(), dtype=np.uint8)
     elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
@@ -42,7 +42,7 @@ def encode_to_uint8(seq):
 def encode_to_onehot(seq):
     "return a onehot from string, uint8, or onehot"
     if isinstance(seq, str):
-        return np.asarray([np.equal(char, one_hot_encoder) for char in np.fromstring(seq, dtype=np.uint8)])
+        return np.asarray([np.equal(char, one_hot_encoder) for char in np.fromstring(seq.lower(), dtype=np.uint8)])
     elif isinstance(seq, np.ndarray):
         if seq.dtype == np.uint8:
         #uint8 array
