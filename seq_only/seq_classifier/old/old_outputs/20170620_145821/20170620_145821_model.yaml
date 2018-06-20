@@ -1,0 +1,286 @@
+backend: tensorflow
+class_name: Model
+config:
+  input_layers:
+  - [input_1, 0, 0]
+  layers:
+  - class_name: InputLayer
+    config:
+      batch_input_shape: !!python/tuple [32, 256, 4]
+      dtype: float32
+      name: input_1
+      sparse: false
+    inbound_nodes: []
+    name: input_1
+  - class_name: Lambda
+    config:
+      arguments: {}
+      function: !!python/tuple ["\xE3\x01\0\0\0\0\0\0\0\x01\0\0\0\b\0\0\0S\0\0\0s>\0\
+          \0\0t\0\0j\x01\0|\0\0|\0\0d\0\0d\0\0\N\x02\0d\0\0d\0\0d\x04\0\N\x03\0d\0\
+          \0d\0\0d\x05\0\N\x03\0f\x03\0\x19g\x02\0d\x02\0d\x03\0\x83\x01\x01S)\x06\
+          N\xE9\x01\0\0\0\xDA\x04axis\xE9\0\0\0\0\xE9\xFF\xFF\xFF\xFFr\x04\0\0\0)\x02\
+          \xDA\x01K\xDA\vconcatenate)\x01\xDA\x01x\xA9\0r\b\0\0\0\xFA\x15train_convnet_ctcf.py\xDA\
+          \b<lambda>(\0\0\0s\0\0\0\0", null, null]
+      function_type: lambda
+      name: lambda_1
+      output_shape: !!python/tuple ["\xE3\x01\0\0\0\0\0\0\0\x01\0\0\0\x04\0\0\0S\0\
+          \0\0s\x1D\0\0\0d\x01\0|\0\0d\x02\0\x19\x14|\0\0d\x03\0\x19|\0\0d\x01\0\x19\
+          f\x03\0S)\x04N\xE9\x02\0\0\0\xE9\0\0\0\0\xE9\x01\0\0\0\xA9\0)\x01\xDA\x01\
+          sr\x04\0\0\0r\x04\0\0\0\xFA\x15train_convnet_ctcf.py\xDA\b<lambda>(\0\0\0\
+          s\0\0\0\0", null, null]
+      output_shape_type: lambda
+      trainable: true
+    inbound_nodes:
+    - - - input_1
+        - 0
+        - 0
+        - {}
+    name: lambda_1
+  - class_name: Conv1D
+    config:
+      activation: relu
+      activity_regularizer: null
+      batch_input_shape: !!python/tuple [null, 64, 4]
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      dtype: float32
+      filters: 64
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: VarianceScaling
+        config: {distribution: uniform, mode: fan_avg, scale: 1.0, seed: null}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [11]
+      name: conv1d_1
+      padding: same
+      strides: !!python/tuple [1]
+      trainable: true
+      use_bias: true
+    inbound_nodes:
+    - - - lambda_1
+        - 0
+        - 0
+        - {}
+    name: conv1d_1
+  - class_name: SpatialDropout1D
+    config: {name: spatial_dropout1d_1, rate: 0.1, trainable: true}
+    inbound_nodes:
+    - - - conv1d_1
+        - 0
+        - 0
+        - {}
+    name: spatial_dropout1d_1
+  - class_name: Conv1D
+    config:
+      activation: relu
+      activity_regularizer: null
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      filters: 32
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: VarianceScaling
+        config: {distribution: uniform, mode: fan_avg, scale: 1.0, seed: null}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [7]
+      name: conv1d_2
+      padding: same
+      strides: !!python/tuple [1]
+      trainable: true
+      use_bias: true
+    inbound_nodes:
+    - - - spatial_dropout1d_1
+        - 0
+        - 0
+        - {}
+    name: conv1d_2
+  - class_name: SpatialDropout1D
+    config: {name: spatial_dropout1d_2, rate: 0.1, trainable: true}
+    inbound_nodes:
+    - - - conv1d_2
+        - 0
+        - 0
+        - {}
+    name: spatial_dropout1d_2
+  - class_name: Conv1D
+    config:
+      activation: relu
+      activity_regularizer: null
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      filters: 16
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: VarianceScaling
+        config: {distribution: uniform, mode: fan_avg, scale: 1.0, seed: null}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [5]
+      name: conv1d_3
+      padding: same
+      strides: !!python/tuple [1]
+      trainable: true
+      use_bias: true
+    inbound_nodes:
+    - - - spatial_dropout1d_2
+        - 0
+        - 0
+        - {}
+    name: conv1d_3
+  - class_name: SpatialDropout1D
+    config: {name: spatial_dropout1d_3, rate: 0.1, trainable: true}
+    inbound_nodes:
+    - - - conv1d_3
+        - 0
+        - 0
+        - {}
+    name: spatial_dropout1d_3
+  - class_name: Conv1D
+    config:
+      activation: relu
+      activity_regularizer: null
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      filters: 8
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: VarianceScaling
+        config: {distribution: uniform, mode: fan_avg, scale: 1.0, seed: null}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [3]
+      name: conv1d_4
+      padding: same
+      strides: !!python/tuple [1]
+      trainable: true
+      use_bias: true
+    inbound_nodes:
+    - - - spatial_dropout1d_3
+        - 0
+        - 0
+        - {}
+    name: conv1d_4
+  - class_name: SpatialDropout1D
+    config: {name: spatial_dropout1d_4, rate: 0.1, trainable: true}
+    inbound_nodes:
+    - - - conv1d_4
+        - 0
+        - 0
+        - {}
+    name: spatial_dropout1d_4
+  - class_name: Conv1D
+    config:
+      activation: relu
+      activity_regularizer: null
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      filters: 1
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: VarianceScaling
+        config: {distribution: uniform, mode: fan_avg, scale: 1.0, seed: null}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [1]
+      name: conv1d_5
+      padding: same
+      strides: !!python/tuple [1]
+      trainable: true
+      use_bias: true
+    inbound_nodes:
+    - - - spatial_dropout1d_4
+        - 0
+        - 0
+        - {}
+    name: conv1d_5
+  - class_name: Conv1D
+    config:
+      activation: linear
+      activity_regularizer: null
+      bias_constraint: null
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      bias_regularizer: null
+      dilation_rate: !!python/tuple [1]
+      filters: 1
+      kernel_constraint: null
+      kernel_initializer:
+        class_name: Ones
+        config: {}
+      kernel_regularizer: null
+      kernel_size: !!python/tuple [50]
+      name: conv1d_6
+      padding: valid
+      strides: !!python/tuple [1]
+      trainable: false
+      use_bias: false
+    inbound_nodes:
+    - - - conv1d_5
+        - 0
+        - 0
+        - {}
+    name: conv1d_6
+  - class_name: Lambda
+    config:
+      arguments: {}
+      function: !!python/tuple
+      - "\xE3\x01\0\0\0\0\0\0\0\x01\0\0\0\b\0\0\0\x13\0\0\0so\0\0\0t\0\0j\x01\0t\0\
+        \0j\x02\0|\0\0d\0\0\x88\0\0\N\x02\0d\0\0d\0\0\N\x02\0d\0\0d\0\0\N\x02\0f\x03\
+        \0\x19d\x01\0d\x02\0\x83\x01\x01t\0\0j\x02\0|\0\0\x88\0\0d\0\0\N\x02\0d\0\0\
+        d\0\0d\x03\0\N\x03\0d\0\0d\0\0\N\x02\0f\x03\0\x19d\x01\0d\x02\0\x83\x01\x01\
+        \x83\x02\0S)\x04N\xDA\x04axis\xE9\x01\0\0\0\xE9\xFF\xFF\xFF\xFF)\x03\xDA\x01\
+        K\xDA\amaximum\xDA\x03max)\x01\xDA\x01x)\x01\xDA\nbatch_size\xA9\0\xFA\x15\
+        train_convnet_ctcf.py\xDA\b<lambda>0\0\0\0s\0\0\0\0"
+      - null
+      - !!python/tuple [32]
+      function_type: lambda
+      name: stackmax
+      output_shape: !!python/tuple ["\xE3\x01\0\0\0\0\0\0\0\x01\0\0\0\x02\0\0\0S\0\
+          \0\0s\x12\0\0\0|\0\0d\x01\0\x19d\x02\0\x1Ad\x03\0f\x02\0S)\x04N\xE9\0\0\0\
+          \0\xE9\x02\0\0\0\xE9\x01\0\0\0\xA9\0)\x01\xDA\x01sr\x04\0\0\0r\x04\0\0\0\
+          \xFA\x15train_convnet_ctcf.py\xDA\b<lambda>0\0\0\0s\0\0\0\0", null, null]
+      output_shape_type: lambda
+      trainable: true
+    inbound_nodes:
+    - - - conv1d_6
+        - 0
+        - 0
+        - {}
+    name: stackmax
+  - class_name: Bias
+    config:
+      activation: tanh
+      bias_initializer:
+        class_name: Zeros
+        config: {}
+      name: bias
+      trainable: true
+      units: 1
+    inbound_nodes:
+    - - - stackmax
+        - 0
+        - 0
+        - {}
+    name: bias
+  name: model_1
+  output_layers:
+  - [bias, 0, 0]
+keras_version: 2.0.3

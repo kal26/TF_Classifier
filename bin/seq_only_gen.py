@@ -23,7 +23,11 @@ import viz_sequence
 import train_TFmodel
 import sequence
 
+<<<<<<< HEAD
 def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0, scrambled=1, shifts=True, score_columns='score'.split()):
+=======
+def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0, scrambled=1):
+>>>>>>> 6e0e7265b8151677f97b65e8e05edf15e0cf7599
     """Create an hdf5 file from a bed file.
     Arguments:
         bed_path -- path to a bed file of sample peaks.
@@ -34,8 +38,11 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
         TF -- the transcription factor to filter for.
         example_limit -- the minimum number of examples to bother with.
         scrambled -- the size of the -mers to consider independent units when scrambeling.
+<<<<<<< HEAD
         shift -- use shifted samples?
         score_columns -- which columns to put as the score
+=======
+>>>>>>> 6e0e7265b8151677f97b65e8e05edf15e0cf7599
     """
     # read TF peaks
     full = pd.read_table(bed_path, header=None)
@@ -116,15 +123,24 @@ def create_from_bed(bed_path, out_path, columns=None, TF='CTCF', example_limit=0
 
     def neg_gen_scrambled(scrambled, mode='train'):
         posgen = pos_gen(mode=mode)
+<<<<<<< HEAD
         if prediction_window % scrambled != 0:
             print(str(scrambled) + 'mers do not evenly divide the sequence.')
+=======
+        if prediction_window // scrambled != 0:
+            print(scrambled + 'mers do not evenly divide the sequence.')
+>>>>>>> 6e0e7265b8151677f97b65e8e05edf15e0cf7599
             scrambled = 1
         for p in posgen:
             p = np.asarray([base for base in p])
             p = p.reshape((-1,scrambled))
             np.random.shuffle(p)
             p = p.reshape([-1])
+<<<<<<< HEAD
             yield ''.join(p)
+=======
+            yield p
+>>>>>>> 6e0e7265b8151677f97b65e8e05edf15e0cf7599
 
     def neg_gen(scrambled=1, mode='train'):
         if shifts:
